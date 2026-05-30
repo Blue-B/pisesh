@@ -1,0 +1,644 @@
+#!/usr/bin/env node
+// pisesh — pi session bookmark & resume TUI
+// Tabs: ★ Favorites / Today / All
+// Storage: ~/.pi/agent/favorites.json
+// Sessions: ~/.pi/agent/sessions/<projectSlug>/<ts>_<uuid>.jsonl
+
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { spawn } = require('child_process');
+const readline = require('readline');
+
+// ── Paths ─────────────────────────────────────────────
+const HOME = os.homedir();
+const SESSIONS_ROOT = path.join(HOME, '.pi/agent/sessions');
+const FAV_FILE = path.join(HOME, '.pi/agent/favorites.json');
+
+// Current session id (set by the /sesh extension before spawning). Lets us
+// flag the currently-attached session in the list with a [NOW] badge.
+const CURRENT_SESSION_ID = (process.env.PISESH_CURRENT_SESSION || '').trim();
+
+// ── ANSI ──────────────────────────────────────────────
+const A = {
+  clr: '\x1b[2J\x1b[H',
+  // Alternate screen buffer: draws into a separate buffer so tab-switching
+  // never pushes prior renders into terminal scrollback. On exit the user's
+  // pre-pisesh terminal content is restored byte-for-byte. Same trick as
+  // less/vim/htop/droid-cli.
+  enterAlt: '\x1b[?1049h',
+  exitAlt: '\x1b[?1049l',
+  hideC: '\x1b[?25l',
+  showC: '\x1b[?25h',
+  R: '\x1b[0m',
+  B: '\x1b[1m',
+  D: '\x1b[2m',
+  I: '\x1b[7m',
+  yel: '\x1b[33m',
+  cyn: '\x1b[36m',
+  grn: '\x1b[32m',
+  mag: '\x1b[35m',
+  red: '\x1b[31m',
+  gry: '\x1b[90m',
+  bgBlu: '\x1b[44m',
+};
+
+// ── Persistence ───────────────────────────────────────
+function loadFavorites() {
+  try {
+    const raw = fs.readFileSync(FAV_FILE, 'utf8');
+    const data = JSON.parse(raw);
+    return new Set(data.ids || []);
+  } catch { return new Set(); }
+}
+
+function saveFavorites(set) {
+  const data = { ids: [...set], updated: new Date().toISOString() };
+  try {
+    fs.mkdirSync(path.dirname(FAV_FILE), { recursive: true });
+    fs.writeFileSync(FAV_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error('save favorites failed:', e.message);
+  }
+}
+
+let favorites = loadFavorites();
+
+// ── Project slug decode ───────────────────────────────
+// pi encodes cwd by replacing '/' with '-' and wrapping in '--…--'
+// "--mnt-c-Users-root--"                       → "/mnt/c/Users/root"
+// "--mnt-c-Users-root-Downloads-instareal--"   → "/mnt/c/Users/root/Downloads/instareal"
+// "--home-shell--"                             → "/home/shell"
+function decodeProjectSlug(slug) {
+  let s = slug;
+  if (s.startsWith('--')) s = '/' + s.slice(2);
+  if (s.endsWith('--')) s = s.slice(0, -2);
+  return s.replace(/-/g, '/');
+}
+
+function shortCwd(cwd, max = 18) {
+  const parts = cwd.split('/').filter(Boolean);
+  if (parts.length === 0) return cwd;
+  const last = parts[parts.length - 1];
+  // Use display-cell truncation so CJK project names don't blow up the column.
+  return trunc(last, max);
+}
+
+// ── Scan sessions ─────────────────────────────────────
+function readSessionMeta(file) {
+  // Read up to 96 KB to find session line + first user prompt
+  let buf;
+  try {
+    const fd = fs.openSync(file, 'r');
+    const tmp = Buffer.alloc(96 * 1024);
+    const n = fs.readSync(fd, tmp, 0, tmp.length, 0);
+    fs.closeSync(fd);
+    buf = tmp.slice(0, n).toString('utf8');
+  } catch { return null; }
+
+  const lines = buf.split('\n');
+  let session = null;
+  let firstPrompt = '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let obj;
+    try { obj = JSON.parse(line); }
+    catch { continue; } // truncated last line is fine
+
+    if (!session && obj.type === 'session') session = obj;
+
+    if (!firstPrompt && obj.type === 'message' && obj.message && obj.message.role === 'user') {
+      const content = obj.message.content;
+      let text = '';
+      if (Array.isArray(content)) {
+        for (const c of content) {
+          if (c && c.type === 'text' && c.text) { text = c.text; break; }
+        }
+      } else if (typeof content === 'string') text = content;
+      if (text.trim()) firstPrompt = text.trim();
+    }
+
+    if (session && firstPrompt) break;
+  }
+  if (!session) return null;
+  session.firstPrompt = firstPrompt;
+  return session;
+}
+
+function scanSessions() {
+  let projectDirs;
+  try {
+    projectDirs = fs.readdirSync(SESSIONS_ROOT, { withFileTypes: true })
+      .filter(d => d.isDirectory());
+  } catch { return []; }
+
+  const results = [];
+  for (const d of projectDirs) {
+    const projectPath = path.join(SESSIONS_ROOT, d.name);
+    const projectLabel = decodeProjectSlug(d.name);
+    let files;
+    try { files = fs.readdirSync(projectPath).filter(f => f.endsWith('.jsonl')); }
+    catch { continue; }
+
+    for (const f of files) {
+      const full = path.join(projectPath, f);
+      let st;
+      try { st = fs.statSync(full); } catch { continue; }
+      const meta = readSessionMeta(full);
+      if (!meta || !meta.id) continue;
+      results.push({
+        id: meta.id,
+        ts: meta.timestamp,
+        mtime: st.mtime,
+        cwd: meta.cwd || projectLabel,
+        project: projectLabel,
+        projectSlug: d.name,
+        file: full,
+        prompt: meta.firstPrompt || '',
+        size: st.size,
+        get favored() { return favorites.has(this.id); },
+        get isCurrent() { return CURRENT_SESSION_ID !== '' && this.id === CURRENT_SESSION_ID; },
+      });
+    }
+  }
+  results.sort((a, b) => b.mtime - a.mtime);
+  return results;
+}
+
+// ── State ─────────────────────────────────────────────
+let sessions = [];
+let tabs = ['★ Favorites', 'Today', 'All'];
+let tabIdx = 0;
+let cursor = 0;
+let filter = '';
+let mode = 'list';      // list | filter | details
+
+// ── Filtering by tab ──────────────────────────────────
+function visibleSessions() {
+  let list = sessions;
+  const tab = tabs[tabIdx];
+
+  if (tab.startsWith('★')) {
+    list = list.filter(s => s.favored);
+  } else if (tab === 'Today') {
+    const today = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD
+    list = list.filter(s => new Date(s.mtime).toLocaleDateString('sv-SE') === today);
+  }
+
+  if (filter) {
+    const q = filter.toLowerCase();
+    list = list.filter(s =>
+      s.id.toLowerCase().includes(q) ||
+      s.project.toLowerCase().includes(q) ||
+      s.prompt.toLowerCase().includes(q)
+    );
+  }
+  return list;
+}
+
+// ── Format helpers ────────────────────────────────────
+function fmtTs(d) {
+  const x = new Date(d);
+  const m = String(x.getMonth() + 1).padStart(2, '0');
+  const day = String(x.getDate()).padStart(2, '0');
+  const hh = String(x.getHours()).padStart(2, '0');
+  const mm = String(x.getMinutes()).padStart(2, '0');
+  return `${m}/${day} ${hh}:${mm}`;
+}
+
+function fmtSize(n) {
+  if (n < 1024) return n + 'B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + 'K';
+  return (n / 1024 / 1024).toFixed(1) + 'M';
+}
+
+// Returns the visible cell width of a character. CJK ideographs,
+// Hangul syllables, fullwidth forms, and most emoji render 2 cells wide
+// in modern terminals; everything else is 1. Without this every row that
+// contains Korean/Chinese/Japanese text would silently wrap, breaking the
+// fixed-column TUI layout. Based on the East Asian Width property
+// (UAX #11) compressed to the ranges that actually appear in practice.
+function charWidth(cp) {
+  if (cp < 0x1100) return 1;
+  if (
+    (cp >= 0x1100 && cp <= 0x115f) ||                 // Hangul Jamo
+    cp === 0x2329 || cp === 0x232a ||
+    (cp >= 0x2e80 && cp <= 0x303e) ||                 // CJK Radicals/Kangxi
+    (cp >= 0x3041 && cp <= 0x33ff) ||                 // Hiragana/Katakana/CJK Symbols
+    (cp >= 0x3400 && cp <= 0x4dbf) ||                 // CJK Ext A
+    (cp >= 0x4e00 && cp <= 0x9fff) ||                 // CJK Unified
+    (cp >= 0xa000 && cp <= 0xa4cf) ||                 // Yi
+    (cp >= 0xac00 && cp <= 0xd7a3) ||                 // Hangul Syllables
+    (cp >= 0xf900 && cp <= 0xfaff) ||                 // CJK Compat
+    (cp >= 0xfe30 && cp <= 0xfe4f) ||                 // CJK Compat Forms
+    (cp >= 0xff00 && cp <= 0xff60) ||                 // Fullwidth ASCII
+    (cp >= 0xffe0 && cp <= 0xffe6) ||                 // Fullwidth signs
+    (cp >= 0x1f300 && cp <= 0x1f64f) ||               // Emoji symbols
+    (cp >= 0x1f680 && cp <= 0x1f6ff) ||               // Transport/map
+    (cp >= 0x1f900 && cp <= 0x1f9ff) ||               // Supplemental symbols
+    (cp >= 0x20000 && cp <= 0x2fffd)                  // CJK Ext B-F
+  ) return 2;
+  return 1;
+}
+
+function displayWidth(s) {
+  if (!s) return 0;
+  let w = 0;
+  for (const ch of s) w += charWidth(ch.codePointAt(0));
+  return w;
+}
+
+// Pad `s` to exactly `n` display cells. If wider, truncate; if narrower,
+// right-pad with spaces. Operates on cells, not code units.
+function pad(s, n) {
+  if (!s) s = '';
+  const w = displayWidth(s);
+  if (w === n) return s;
+  if (w < n) return s + ' '.repeat(n - w);
+  // Wider than n — truncate character-by-character.
+  let out = '', cur = 0;
+  for (const ch of s) {
+    const cw = charWidth(ch.codePointAt(0));
+    if (cur + cw > n) break;
+    out += ch; cur += cw;
+  }
+  if (cur < n) out += ' '.repeat(n - cur);
+  return out;
+}
+
+// Truncate `s` so that displayWidth(out) ≤ maxWidth, appending '…' when
+// truncated. Whitespace runs (including newlines) collapse to one space.
+function trunc(s, maxWidth) {
+  if (!s) return '';
+  s = s.replace(/\s+/g, ' ').trim();
+  if (displayWidth(s) <= maxWidth) return s;
+  let out = '', cur = 0;
+  for (const ch of s) {
+    const cw = charWidth(ch.codePointAt(0));
+    if (cur + cw > maxWidth - 1) break;     // reserve 1 cell for the …
+    out += ch; cur += cw;
+  }
+  return out + '…';
+}
+
+function visLen(s) {
+  // strip ANSI escapes, then measure in display cells
+  return displayWidth(s.replace(/\x1b\[[0-9;]*m/g, ''));
+}
+
+// ── Render ────────────────────────────────────────────
+function render() {
+  if (mode === 'details') return renderDetails();
+  renderList();
+}
+
+function renderList() {
+  const W = process.stdout.columns || 100;
+  const H = process.stdout.rows || 30;
+  let out = A.clr;
+
+  // Header
+  out += ' ' + A.B + A.cyn + 'pisesh' + A.R + A.D + '  pi session bookmarks  ' + A.R;
+  out += A.gry + `${sessions.length} sessions · ${favorites.size} starred` + A.R + '\n\n';
+
+  // Tabs
+  let tabLine = ' ';
+  tabs.forEach((t, i) => {
+    if (i === tabIdx) tabLine += A.I + A.B + ' ' + t + ' ' + A.R + '  ';
+    else tabLine += A.D + ' ' + t + ' ' + A.R + '  ';
+  });
+  out += tabLine + '\n';
+  out += A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
+
+  // Filter line
+  if (mode === 'filter' || filter) {
+    const caret = mode === 'filter' ? A.I + ' ' + A.R : '';
+    out += ' ' + A.cyn + '/' + A.R + ' ' + filter + caret + '\n';
+    out += A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
+  }
+
+  // List
+  const list = visibleSessions();
+  if (cursor >= list.length) cursor = Math.max(0, list.length - 1);
+
+  const headerH = (mode === 'filter' || filter) ? 7 : 5;
+  const footerH = 4;
+  const usable = Math.max(3, H - headerH - footerH);
+  const start = Math.max(0, Math.min(cursor - Math.floor(usable / 2), list.length - usable));
+  const end = Math.min(list.length, start + usable);
+
+  if (list.length === 0) {
+    let hint;
+    if (filter) {
+      hint = '(no matches — Esc clears filter)';
+    } else if (tabs[tabIdx].startsWith('★')) {
+      hint = '(no favorites yet — press f on any session to star it)';
+    } else if (tabs[tabIdx] === 'Today') {
+      hint = '(no sessions today — Tab to see All)';
+    } else {
+      hint = '(no sessions in this view)';
+    }
+    out += '\n ' + A.D + hint + A.R + '\n';
+  } else {
+    for (let i = start; i < end; i++) {
+      const s = list[i];
+      const sel = i === cursor;
+      const star = s.favored ? A.yel + '★' + A.R : ' ';
+      const arrow = sel ? A.cyn + '▶' + A.R : ' ';
+      const ts = A.gry + fmtTs(s.mtime) + A.R;
+      const cwd = A.mag + pad(shortCwd(s.cwd), 14) + A.R;
+      const badge = s.isCurrent ? A.grn + A.B + '[NOW]' + A.R + ' ' : '';
+      const promptMax = Math.max(20, W - 38 - (s.isCurrent ? 7 : 0));
+      const prompt = trunc(s.prompt || `(no prompt) ${s.id.slice(0, 8)}`, promptMax);
+      const rowText = ` ${arrow} ${star} ${ts}  ${cwd}  ${badge}${prompt}`;
+      if (sel) {
+        const pad2 = ' '.repeat(Math.max(0, W - visLen(rowText) - 1));
+        out += A.bgBlu + rowText + pad2 + A.R + '\n';
+      } else {
+        out += rowText + '\n';
+      }
+    }
+  }
+
+  // Pad bottom to push footer down
+  const linesUsed = (end - start) || 1;
+  for (let i = 0; i < usable - linesUsed; i++) out += '\n';
+
+  // Footer
+  out += A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
+  out += ' ' + A.D + '↑↓' + A.R + ' move  '
+      + A.D + 'Tab' + A.R + ' next tab  '
+      + A.D + 'f' + A.R + ' star  '
+      + A.D + 'Enter' + A.R + ' resume  '
+      + A.D + 'd' + A.R + ' details  '
+      + A.D + '/' + A.R + ' search  '
+      + A.D + 'r' + A.R + ' refresh  '
+      + A.D + 'q/Esc' + A.R + ' quit' + '\n';
+
+  process.stdout.write(out);
+}
+
+function renderDetails() {
+  const W = process.stdout.columns || 100;
+  const list = visibleSessions();
+  const s = list[cursor];
+  let out = A.clr;
+  out += ' ' + A.B + A.cyn + 'pisesh' + A.R + A.D + '  session details' + A.R + '\n\n';
+  if (!s) { out += ' (no session)\n'; process.stdout.write(out); return; }
+
+  const row = (k, v, color = A.R) => ` ${A.D}${pad(k, 11)}${A.R} ${color}${v}${A.R}\n`;
+  out += row('id', s.id, A.cyn);
+  if (s.isCurrent) out += row('current', '● this is the attached pi session', A.grn);
+  out += row('starred', s.favored ? '★ yes' : '☆ no', s.favored ? A.yel : A.gry);
+  out += row('started', new Date(s.ts).toLocaleString());
+  out += row('updated', new Date(s.mtime).toLocaleString());
+  out += row('cwd', s.cwd, A.mag);
+  out += row('project', s.project);
+  out += row('size', fmtSize(s.size));
+  out += row('file', s.file, A.gry);
+  out += '\n ' + A.D + 'first prompt:' + A.R + '\n';
+  const prompt = s.prompt || '(no user prompt found in first 96KB)';
+  const wrapped = wrap(prompt, W - 4);
+  for (const line of wrapped) out += '   ' + line + '\n';
+
+  out += '\n' + A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
+  out += ' ' + A.D + 'Enter' + A.R + ' resume  '
+      + A.D + 'f' + A.R + ' star  '
+      + A.D + 'c' + A.R + ' copy id  '
+      + A.D + 'Esc/d/q' + A.R + ' back' + '\n';
+
+  process.stdout.write(out);
+}
+
+function wrap(text, width) {
+  if (!text) return [''];
+  const out = [];
+  let line = '';
+  for (const word of text.split(/\s+/)) {
+    if ((line + ' ' + word).trim().length > width) {
+      if (line) out.push(line);
+      line = word;
+    } else line = (line + ' ' + word).trim();
+  }
+  if (line) out.push(line);
+  return out.slice(0, 10); // cap at 10 lines
+}
+
+// ── Input ─────────────────────────────────────────────
+function setupInput() {
+  readline.emitKeypressEvents(process.stdin);
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+  process.stdin.resume();
+  // Enter alt screen FIRST, then hide cursor. The terminal saves the user's
+  // visible buffer + cursor position; we restore both on exit.
+  process.stdout.write(A.enterAlt + A.hideC);
+
+  process.stdin.on('keypress', (str, key) => {
+    try {
+      if (mode === 'filter') handleFilter(str, key);
+      else if (mode === 'details') handleDetails(str, key);
+      else handleList(str, key);
+      render();
+    } catch (e) {
+      process.stdout.write(A.showC);
+      console.error('input error:', e);
+    }
+  });
+
+  process.stdout.on('resize', render);
+  // Safety net: even on unexpected exit (uncaught error, signal), leave alt
+  // screen and re-show the hardware cursor so the user's terminal isn't
+  // left in a broken state.
+  process.on('exit', () => process.stdout.write(A.exitAlt + A.showC));
+  process.on('SIGINT', () => quit());
+  process.on('SIGTERM', () => quit());
+}
+
+function handleList(str, key) {
+  const list = visibleSessions();
+  const k = key.name;
+
+  if (key.ctrl && k === 'c') return quit();
+  if (k === 'q') return quit();
+  // Esc: clears filter first (one-step back-out), otherwise quits.
+  // Matches `q` so muscle memory works either way.
+  if (k === 'escape') {
+    if (filter) { filter = ''; cursor = 0; return; }
+    return quit();
+  }
+  if (k === 'up' || k === 'k') cursor = Math.max(0, cursor - 1);
+  else if (k === 'down' || k === 'j') cursor = Math.min(list.length - 1, cursor + 1);
+  else if (k === 'tab' || (k === 'right' && !filter) || k === 'l') {
+    tabIdx = (tabIdx + 1) % tabs.length;
+    cursor = 0;
+  }
+  else if ((k === 'left' && !filter) || k === 'h') {
+    tabIdx = (tabIdx - 1 + tabs.length) % tabs.length;
+    cursor = 0;
+  }
+  else if (k === 'f' || str === ' ') {
+    const s = list[cursor];
+    if (s) {
+      if (s.favored) favorites.delete(s.id);
+      else favorites.add(s.id);
+      saveFavorites(favorites);
+    }
+  }
+  else if (k === 'return') resumeSession(list[cursor]);
+  else if (k === 'd') { if (list[cursor]) mode = 'details'; }
+  else if (str === '/') { mode = 'filter'; }
+  else if (k === 'r') { sessions = scanSessions(); cursor = 0; }
+  else if (k === 'home') cursor = 0;
+  else if (k === 'end') cursor = list.length - 1;
+  else if (k === 'pageup') cursor = Math.max(0, cursor - 10);
+  else if (k === 'pagedown') cursor = Math.min(list.length - 1, cursor + 10);
+}
+
+function handleFilter(str, key) {
+  const k = key.name;
+  if (k === 'return' || k === 'escape') { mode = 'list'; return; }
+  if (k === 'backspace') { filter = filter.slice(0, -1); cursor = 0; return; }
+  if (key.ctrl && k === 'c') return quit();
+  if (key.ctrl && k === 'u') { filter = ''; cursor = 0; return; }
+  if (str && str.length === 1 && !key.ctrl) { filter += str; cursor = 0; }
+}
+
+function handleDetails(str, key) {
+  const k = key.name;
+  const s = visibleSessions()[cursor];
+  if (k === 'escape' || k === 'q' || k === 'd') { mode = 'list'; return; }
+  if (key.ctrl && k === 'c') return quit();
+  if (k === 'return') return resumeSession(s);
+  if (k === 'f' && s) {
+    if (s.favored) favorites.delete(s.id); else favorites.add(s.id);
+    saveFavorites(favorites);
+  }
+  if (k === 'c' && s) {
+    // Try clipboard via clip.exe (WSL) or pbcopy/xclip
+    tryCopy(s.id);
+  }
+}
+
+function tryCopy(text) {
+  const tryCmd = (cmd, args) => {
+    try {
+      const p = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'ignore'] });
+      p.stdin.end(text);
+      return true;
+    } catch { return false; }
+  };
+  // WSL clip.exe first, then pbcopy, then xclip
+  tryCmd('clip.exe', []) || tryCmd('pbcopy', []) || tryCmd('xclip', ['-selection', 'clipboard']);
+}
+
+// ── Actions ───────────────────────────────────────────
+function resumeSession(s) {
+  if (!s) return;
+  // Leave alt screen + show cursor so the spawned pi takes over a clean
+  // main-buffer terminal (it will manage its own alt screen).
+  process.stdout.write(A.exitAlt + A.showC);
+  if (process.stdin.isTTY) process.stdin.setRawMode(false);
+  process.stdin.pause();
+
+  const projectDir = path.dirname(s.file);
+  // Spawn pi in the original cwd with the session restored
+  const child = spawn('pi', ['--session', s.id, '--session-dir', projectDir], {
+    stdio: 'inherit',
+    cwd: fs.existsSync(s.cwd) ? s.cwd : process.cwd(),
+  });
+  child.on('exit', code => process.exit(code || 0));
+  child.on('error', err => {
+    console.error('Failed to spawn pi:', err.message);
+    process.exit(1);
+  });
+}
+
+function quit() {
+  // Restore user's pre-pisesh terminal (alt screen exits + cursor back).
+  // No explicit clear needed — the terminal restoration handles it and the
+  // jump back to the previous prompt feels instant.
+  process.stdout.write(A.exitAlt + A.showC);
+  if (process.stdin.isTTY) process.stdin.setRawMode(false);
+  process.exit(0);
+}
+
+// ── Main ──────────────────────────────────────────────
+function printHelp() {
+  console.log(`pisesh — pi session bookmarks & resume TUI
+
+Usage:
+  pisesh                 Open interactive TUI
+  pisesh --list, -l      List starred session IDs (one per line)
+  pisesh --json          Dump favorites file as JSON
+  pisesh --star <id>     Add a session id (partial UUID ok) to favorites
+  pisesh --unstar <id>   Remove a session id from favorites
+  pisesh --help, -h      This help
+
+TUI keys:
+  ↑↓ / j k         move cursor
+  Tab / h l        switch tab  (★ Favorites → Today → All)
+  f / Space        toggle favorite
+  Enter            resume session (spawns 'pi --session …')
+  d                show details
+  /                search (id / project / prompt; Esc clears first, then quits)
+  r                rescan session files
+  q / Esc / Ctrl-C quit
+
+Files:
+  Favorites: ${FAV_FILE}
+  Sessions : ${SESSIONS_ROOT}/<project>/<ts>_<uuid>.jsonl`);
+}
+
+function findIdMatch(prefix) {
+  sessions = scanSessions();
+  const matches = sessions.filter(s => s.id.startsWith(prefix) || s.id.includes(prefix));
+  return matches.map(s => s.id);
+}
+
+function main() {
+  const argv = process.argv.slice(2);
+
+  if (argv.includes('-h') || argv.includes('--help')) { printHelp(); return; }
+  if (argv.includes('-l') || argv.includes('--list')) {
+    [...favorites].forEach(id => console.log(id));
+    return;
+  }
+  if (argv.includes('--json')) {
+    console.log(JSON.stringify({ ids: [...favorites], updated: new Date().toISOString() }, null, 2));
+    return;
+  }
+
+  const starIdx = argv.indexOf('--star');
+  if (starIdx >= 0 && argv[starIdx + 1]) {
+    const ids = findIdMatch(argv[starIdx + 1]);
+    if (ids.length === 0) { console.error('no matching session'); process.exit(2); }
+    if (ids.length > 1) { console.error('ambiguous:'); ids.forEach(i => console.error(' ', i)); process.exit(2); }
+    favorites.add(ids[0]); saveFavorites(favorites);
+    console.log('★ starred', ids[0]); return;
+  }
+  const unstarIdx = argv.indexOf('--unstar');
+  if (unstarIdx >= 0 && argv[unstarIdx + 1]) {
+    const ids = findIdMatch(argv[unstarIdx + 1]);
+    if (ids.length === 0) { console.error('no matching session'); process.exit(2); }
+    if (ids.length > 1) { console.error('ambiguous:'); ids.forEach(i => console.error(' ', i)); process.exit(2); }
+    favorites.delete(ids[0]); saveFavorites(favorites);
+    console.log('☆ unstarred', ids[0]); return;
+  }
+
+  if (!process.stdin.isTTY) {
+    console.error('pisesh: stdin is not a TTY (use a terminal to run the TUI). Try --list or --help.');
+    process.exit(1);
+  }
+
+  sessions = scanSessions();
+  if (sessions.length === 0) {
+    console.error('pisesh: no sessions found under', SESSIONS_ROOT);
+    process.exit(1);
+  }
+  setupInput();
+  render();
+}
+
+main();

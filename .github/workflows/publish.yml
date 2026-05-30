@@ -1,0 +1,50 @@
+# Publishes pisesh to npm when a v*.*.* tag is pushed.
+#
+# Setup once:
+#   1. Generate an npm automation token: https://www.npmjs.com/settings/<user>/tokens
+#      → "Granular Access Token" with publish scope for the `pisesh` package.
+#   2. Add it to GitHub repo secrets as NPM_TOKEN
+#      → Settings → Secrets and variables → Actions → New repository secret.
+#
+# To cut a release:
+#   npm version patch            # bumps version + commits + tags
+#   git push --follow-tags       # triggers this workflow
+
+name: publish
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Syntax check
+        run: node --check bin/pisesh
+
+      - name: Verify tag matches package.json version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version=$(node -p "require('./package.json').version")
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::Tag v$tag_version doesn't match package.json $pkg_version"
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

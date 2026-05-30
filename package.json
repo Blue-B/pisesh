@@ -1,0 +1,50 @@
+{
+  "name": "pisesh",
+  "version": "0.1.0",
+  "description": "Bookmark, search, and resume pi coding-agent sessions with a fast keyboard-driven TUI.",
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "session",
+    "bookmark",
+    "tui",
+    "cli",
+    "ai",
+    "coding-agent",
+    "resume",
+    "favorites"
+  ],
+  "homepage": "https://github.com/Blue-B/pisesh#readme",
+  "bugs": {
+    "url": "https://github.com/Blue-B/pisesh/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Blue-B/pisesh.git"
+  },
+  "license": "MIT",
+  "author": "Blue-B <source_vs@naver.com>",
+  "type": "commonjs",
+  "bin": {
+    "pisesh": "./bin/pisesh"
+  },
+  "files": [
+    "bin/",
+    "extensions/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/sesh.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --check bin/pisesh && echo 'pisesh: syntax OK'",
+    "prepublishOnly": "npm test"
+  }
+}

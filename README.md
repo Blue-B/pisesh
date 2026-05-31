@@ -12,23 +12,11 @@
 
 ## Preview
 
-```text
-┌─ pisesh ─────────────────────────────────────────────────────────────┐
-│  pisesh  pi session bookmarks  316 sessions · 4 starred              │
-│                                                                      │
-│  [★ Favorites]   [Today]   [All]                                     │
-│ ─────────────────────────────────────────────────────────────────── │
-│ ▶ ★ 05/31 01:33  root            [NOW] 팔림시스트 secret 라우트 …    │
-│   ★ 05/30 22:13  root                  chunk dedup 작업 마무리…       │
-│     05/30 22:05  root                  ENV_ASSIGNMENT 패턴 너무 …     │
-│   ★ 05/30 21:58  instareal             릴스자동화 글귀 5편 뽑아…      │
-│     05/30 21:50  root                  /scoped-models 명령 동작…      │
-│     05/30 19:38  WhisperSubTrans       이슈 #26 이전버전 확인…        │
-│ ─────────────────────────────────────────────────────────────────── │
-│ ↑↓ move  Tab next tab  f star  Enter resume  d details  / search    │
-│ r refresh  q/Esc quit                                               │
-└──────────────────────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="assets/preview.png" alt="pisesh — Favorites tab in a real Windows Terminal session" width="100%">
+</p>
+
+<p align="center"><sub>Real capture: ★ starred session at the top, the rest available behind the <b>Today</b> and <b>All</b> tabs. <code>Tab</code> cycles. <code>f</code> stars. <code>Enter</code> resumes.</sub></p>
 
 ## Why pisesh
 
@@ -236,7 +224,7 @@ If pisesh saves you context-switching time or just makes pi nicer to live in, su
 - One-time sponsors are credited in README and release notes (opt-out available).
 - Monthly sponsors ($3/mo via GitHub Sponsors) get best-effort priority triage for "Sponsor Request" issues.
 
-[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub-EA4AAA?style=for-the-badge&logo=github-sponsors&logoColor=white)](https://github.com/sponsors/Blue-B) [![Buy Me A Coffee](https://img.shields.io/badge/One%E2%80%91time_$3-Buy_Me_A_Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=000)](https://buymeacoffee.com/beckycode7h)
+[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub-EA4AAA?style=for-the-badge&logo=github-sponsors&logoColor=white)](https://github.com/sponsors/Blue-B) [![Buy Me A Coffee](https://img.shields.io/badge/One%E2%80%91time_$3-Buy_Me_A_Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=000)](https://buymeacoffee.com/beckycode7h) [![PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/ncp/payment/ZEWFKDX595ESJ)
 
 ## Acknowledgments
 

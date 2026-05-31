@@ -1,107 +1,267 @@
 # pisesh
 
-> **Bookmark, search, and resume your [pi](https://github.com/earendil-works/pi-coding-agent) sessions with a fast keyboard-driven TUI.**
+[![npm](https://img.shields.io/npm/v/pisesh?style=for-the-badge&logo=npm&color=CB3837&logoColor=white)](https://www.npmjs.com/package/pisesh)
+[![ci](https://img.shields.io/github/actions/workflow/status/Blue-B/pisesh/ci.yml?branch=main&style=for-the-badge&logo=github-actions&logoColor=white&label=CI)](https://github.com/Blue-B/pisesh/actions/workflows/ci.yml)
+[![license](https://img.shields.io/github/license/Blue-B/pisesh?style=for-the-badge&color=blue)](LICENSE)
+[![node](https://img.shields.io/badge/node-%E2%89%A518-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![deps](https://img.shields.io/badge/dependencies-0-brightgreen?style=for-the-badge)](package.json)
+
+**Bookmark, search, and resume [pi coding-agent](https://github.com/earendil-works/pi-coding-agent) sessions with a fast keyboard-driven TUI.**
+
+> `pi --resume` lists every session you ever started. After a week that's 50+ entries with no titles, no tags, no order — just scroll and pray. **pisesh** adds the one thing that was missing: ⭐ favorites, instant search, and a `[NOW]` badge for the session you're attached to.
+
+## Preview
 
 ```text
-┌─ pisesh ─────────────────────────────────────────────────┐
-│ [★ Favorites]  [Today]  [All]                            │
-├──────────────────────────────────────────────────────────┤
-│ ★ 05/31 01:33  root          [NOW] 팔림시스트 secret …   │
-│   05/31 01:30  root                여태 컴퓨터가 꺼진 …   │
-│ ▶ 05/30 22:33  aitapps             지금 디렉토리에 앱 …   │
-│ ★ 05/30 22:13  root                LINE-TRANSLATOR …     │
-│   05/30 21:58  instareal           릴스자동화 글귀 5편 …  │
-│   05/30 19:18  WhisperSubTrans     이슈 #26 …             │
-├──────────────────────────────────────────────────────────┤
-│ ↑↓ move  Tab tab  f star  Enter resume  / search  q quit │
-└──────────────────────────────────────────────────────────┘
+┌─ pisesh ─────────────────────────────────────────────────────────────┐
+│  pisesh  pi session bookmarks  316 sessions · 4 starred              │
+│                                                                      │
+│  [★ Favorites]   [Today]   [All]                                     │
+│ ─────────────────────────────────────────────────────────────────── │
+│ ▶ ★ 05/31 01:33  root            [NOW] 팔림시스트 secret 라우트 …    │
+│   ★ 05/30 22:13  root                  chunk dedup 작업 마무리…       │
+│     05/30 22:05  root                  ENV_ASSIGNMENT 패턴 너무 …     │
+│   ★ 05/30 21:58  instareal             릴스자동화 글귀 5편 뽑아…      │
+│     05/30 21:50  root                  /scoped-models 명령 동작…      │
+│     05/30 19:38  WhisperSubTrans       이슈 #26 이전버전 확인…        │
+│ ─────────────────────────────────────────────────────────────────── │
+│ ↑↓ move  Tab next tab  f star  Enter resume  d details  / search    │
+│ r refresh  q/Esc quit                                               │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-## Why
+## Why pisesh
 
-pi accumulates *a lot* of sessions across many cwds. The built-in `pi --resume` shows them, but offers no way to **mark the important ones** or jump back later. After a week you have 50+ sessions, no idea which is which, and scrolling is painful.
+Pi accumulates sessions across many working directories — your home, several project dirs, scratch tmux panes. The built-in resume picker is alphabetical-ish and forgets context. After a few weeks:
 
-**pisesh** is a tiny, zero-dependency TUI that:
+- You can't tell which session was "the one where you fixed the auth bug"
+- You can't pin the 3-4 long-running threads you keep going back to
+- You re-open the wrong session and pollute it with unrelated context
+- You waste time searching by timestamp guessing
 
-- ⭐ **Stars** sessions you want to keep handy
-- 🔎 **Searches** id / project / first user prompt with `/`
-- 🕒 Shows **Today** vs **All** in tabs
-- 🎯 Marks the **`[NOW]`** session if you launched from inside pi
-- ⌨️ Runs on the **alternate screen buffer** — exit and your terminal is exactly where you left it (like `less`, `vim`, `htop`, droid CLI)
-- 🚀 **One Enter** spawns `pi --session <id>` in the original cwd
+pisesh is a **single-file Node script** (no dependencies, ~600 LoC) that gives you everything `pi --resume` doesn't.
 
-Single-file Node script, no `npm install` for runtime, ~600 lines.
+### Value at a glance
 
-## Install
+| Need                                       | What you get                                                                 |
+| ------------------------------------------ | ---------------------------------------------------------------------------- |
+| Mark important sessions                    | ⭐ Star/unstar with one keystroke; favorites persist to one global JSON       |
+| Find a session by what you said            | `/` searches id + project + first user prompt                                |
+| Know which session you're attached to      | `[NOW]` badge on the live session (passed from pi via env var)               |
+| Keep your terminal clean                   | Alt-screen buffer — exit restores your terminal byte-for-byte (like vim)     |
+| Read Korean / Chinese / Japanese prompts   | Display-width-aware truncation; columns never blow up on CJK                 |
+| Open from anywhere                         | Run as standalone `pisesh` shell command, or `/sesh` inside pi               |
+| Zero install pain                          | No build step, no native deps, runs on Node 18+ everywhere                   |
+| Trust it with your history                 | pisesh only writes one favorites file; session jsonl files are read-only     |
 
-### As a standalone CLI
+## Getting started
+
+### Quick install (recommended)
+
+```bash
+# Install both the CLI and the /sesh slash command in one go
+pi install npm:pisesh
+```
+
+This registers pisesh as a pi extension. Inside any pi session, type `/sesh`.
+
+### Standalone CLI only
 
 ```bash
 npm install -g pisesh
 pisesh
 ```
 
-That's it. The `pisesh` binary scans `~/.pi/agent/sessions/` and serves you a picker.
+Use this if you want pisesh as a separate shell command and don't need the pi slash binding.
 
-### As a pi slash command (`/sesh`)
+### From source (developers)
 
 ```bash
-# Inside any pi session, just once:
-pi install npm:pisesh
-
-# Reload extensions in the current pi:
-/reload
+git clone https://github.com/Blue-B/pisesh.git
+cd pisesh
+npm link            # symlink ./bin/pisesh into your global PATH
+pisesh --help
 ```
 
-Now `/sesh` opens pisesh **inside pi**. Pick a session, hit Enter, work in it, `q` when done — you'll pop back to the pi session you launched from.
-
-> **How it works:** the `/sesh` slash command pauses pi's TUI via `ui.custom()` + `tui.stop()`, spawns `pisesh` with `stdio: "inherit"`, and re-renders pi when pisesh exits. Same trick the [interactive-shell](https://github.com/earendil-works/pi-coding-agent/blob/main/examples/extensions/interactive-shell.ts) example extension uses.
+Pi-extension side: drop `extensions/sesh.ts` into `~/.pi/agent/extensions/` and run `/reload` inside pi.
 
 ## Keys
 
-| Key                 | Action                                                     |
-| ------------------- | ---------------------------------------------------------- |
-| `↑` `↓` / `j` `k`   | move cursor                                                |
-| `Tab` / `h` `l`     | switch tab (`★ Favorites` → `Today` → `All`)               |
-| `f` / `Space`       | star / unstar the selected session                         |
-| `Enter`             | resume (spawns `pi --session <id> --session-dir <dir>`)    |
-| `d`                 | session details (full prompt, file path, size, timestamps) |
-| `/`                 | search by id / project / first prompt                      |
-| `Esc`               | clears search (one-step back) then quits                   |
-| `q` / `Ctrl-C`      | quit (terminal is restored byte-for-byte)                  |
-| `r`                 | rescan session files                                       |
-| `c` (details only)  | copy session id to clipboard (clip.exe / pbcopy / xclip)   |
-| `Home` `End` `PgUp` `PgDn` | jump to top / bottom / ±10                          |
+| Key                          | Action                                                       |
+| ---------------------------- | ------------------------------------------------------------ |
+| `↑` `↓` / `j` `k`            | move cursor                                                  |
+| `Tab` / `h` / `l`            | switch tab (`★ Favorites` → `Today` → `All`)                 |
+| `f` / `Space`                | star / unstar the selected session                           |
+| `Enter`                      | resume — spawns `pi --session <id> --session-dir <dir>`      |
+| `d`                          | session details (full prompt, file, byte size, timestamps)   |
+| `/`                          | search by id / project / first user prompt                   |
+| `Esc`                        | clear search first, then quit                                |
+| `q` / `Ctrl-C`               | quit (terminal restored)                                     |
+| `r`                          | rescan session files (after pi starts a new session)         |
+| `c` (in details view)        | copy session id to clipboard (clip.exe / pbcopy / xclip)     |
+| `Home` `End` `PgUp` `PgDn`   | jump to top / bottom / ±10                                   |
 
 ## CLI (non-TUI) usage
+
+For scripts and automation:
 
 ```bash
 pisesh --list                  # print starred session IDs (one per line)
 pisesh --json                  # full favorites file as JSON
-pisesh --star <partial-uuid>   # star by partial id from a script
-pisesh --unstar <partial-uuid>
+pisesh --star <partial-uuid>   # star a session from a script
+pisesh --unstar <partial-uuid> # unstar
 pisesh --help
 ```
 
+## Tech Stack
+
+[![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/) [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=000)](https://developer.mozilla.org/docs/Web/JavaScript) [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![pi](https://img.shields.io/badge/pi--coding--agent-5C4EE5?style=for-the-badge)](https://github.com/earendil-works/pi-coding-agent)
+
+| Area                | Details                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------ |
+| Runtime             | Node.js ≥ 18 (uses only built-in modules: `fs`, `path`, `os`, `child_process`, `readline`)       |
+| TUI rendering       | Raw ANSI escape sequences (no `blessed` / `ink` / `chalk` dependency)                            |
+| Alt screen buffer   | `\x1b[?1049h` / `\x1b[?1049l` — same primitive as `vim`, `less`, `htop`, droid CLI               |
+| Input               | Node's `readline.emitKeypressEvents` in raw mode                                                 |
+| Width calculation   | UAX #11 East Asian Width ranges, compressed to ~10 inline range checks                           |
+| Pi extension        | TypeScript factory using `@earendil-works/pi-coding-agent` extension API (`ui.custom`, `tui.stop`) |
+| Storage             | Single JSON file at `~/.pi/agent/favorites.json` (`{ ids: [...], updated: "iso" }`)              |
+| Session discovery   | Direct filesystem scan of `~/.pi/agent/sessions/<projectSlug>/*.jsonl`; first 96 KB parsed       |
+| Process model       | Slash command pauses pi's TUI, spawns pisesh with inherited stdio, restarts pi on exit           |
+
+### What it explicitly does **not** depend on
+
+- No `npm install` for the bundled CLI runtime — true zero-dep
+- No native binaries / GPU / ffmpeg / database
+- No network calls, no telemetry, no analytics
+- No daemon / background process
+
+## How resume works
+
+```text
+pi (session A)  ── /sesh ──▶  ui.custom + tui.stop()
+                              │
+                              └─▶ spawn pisesh  (PISESH_CURRENT_SESSION=A)
+                                    │  ↑↓ Tab f / Enter on session B
+                                    │
+                                    └─▶ spawn  pi --session B --session-dir <dir>
+                                          │
+                                          │  user works in B …
+                                          │  user types q / ^D
+                                          │
+                                    ◀─── inner pi exits, pisesh exits
+                              │
+                ◀─── tui.start() + requestRender(true)
+pi (session A) continues exactly where it was
+```
+
+The current pi session is paused, not lost. When you finish with the resumed session, you pop back to A with full state intact.
+
 ## Storage
 
-| What       | Where                                      |
-| ---------- | ------------------------------------------ |
-| Favorites  | `~/.pi/agent/favorites.json`               |
-| Sessions   | `~/.pi/agent/sessions/<projectSlug>/*.jsonl` (pi's native layout) |
+| What       | Where                                                       |
+| ---------- | ----------------------------------------------------------- |
+| Favorites  | `~/.pi/agent/favorites.json`                                |
+| Sessions   | `~/.pi/agent/sessions/<projectSlug>/<timestamp>_<uuid>.jsonl` (pi's native layout — pisesh never writes here) |
 
-pisesh **only writes the favorites file**. Session files are read-only to pisesh — your pi history is never modified.
+Favorites file shape:
 
-## CJK-aware
+```json
+{
+  "ids": [
+    "019e79b9-d2c1-741f-81ea-1dcad9a2d712",
+    "019e6355-9957-7a30-b4ce-b9db5e3c9ac6"
+  ],
+  "updated": "2026-05-31T01:33:21.234Z"
+}
+```
 
-Korean / Chinese / Japanese characters render 2 cells wide in terminals; pisesh measures display width (not code units) when truncating and padding, so columns stay aligned and rows never wrap.
+It's a single global file (not per-project). Back it up by syncing one file.
+
+## CJK-aware rendering
+
+Korean / Chinese / Japanese / fullwidth characters render **2 cells wide** in terminals; pisesh measures display width (not JavaScript code-unit length) when truncating and padding. Korean prompts never wrap, columns stay aligned, and the layout looks identical whether the prompt is `hello world` or `안녕하세요 세상`.
+
+```text
+✓ aitapps         지금 디렉토리에 앱인토스 제출용앱을 만들었는데…
+✓ 공모전          신소재 공학 관련 졸업과제 도와줘…
+✓ WhisperSubTrans 이슈 #26 이전 버전 아닌가 확인…
+```
+
+(Previously: Korean prompts overflowed to a second line and broke the table.)
 
 ## Requirements
 
-- Node **≥ 18**
-- A terminal that supports ANSI escapes + the alternate screen buffer (basically any modern one: iTerm, Windows Terminal, Alacritty, Kitty, GNOME Terminal, …)
+- **Node.js ≥ 18** (uses optional chaining, `for…of` on strings — no transpile needed)
+- A terminal with ANSI escape + alternate screen buffer support — basically every modern emulator:
+  - Windows: **Windows Terminal**, **WezTerm**, **Alacritty** ✅
+  - macOS: **iTerm2**, **Terminal.app**, **WezTerm**, **Alacritty**, **Kitty** ✅
+  - Linux: **GNOME Terminal**, **Konsole**, **xterm**, **Alacritty**, **Kitty** ✅
 - [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) on `$PATH` for the `Enter`-to-resume action
+
+## Roadmap
+
+| Status | Item                                                                            |
+| ------ | ------------------------------------------------------------------------------- |
+| ✅     | Tabs, star/unstar, search, alt-screen, CJK width, `[NOW]` badge, pi `/sesh`     |
+| 🚧     | `n` / `N` jump to next / previous search match (less-style)                     |
+| 🚧     | Highlight matched substring in yellow                                           |
+| 🚧     | Filter by `today/yesterday/this-week`                                           |
+| 🧠     | Optional summarize first-N user prompts via local model for richer titles       |
+| 🧠     | Export starred sessions as a single bundle (share / archive)                    |
+| 🧠     | Inline rename / label (`n` to add a custom title that overrides first prompt)   |
+
+PRs welcome for anything in the 🚧 lane.
+
+## Contributing
+
+```bash
+git clone https://github.com/Blue-B/pisesh.git
+cd pisesh
+npm link
+npm test        # node --check + smoke test
+```
+
+Branching: short-lived `feature/<scope>` or `fix/<scope>` → squash-merge into `main`.
+Commits: [Conventional Commits](https://www.conventionalcommits.org/) style (`feat:`, `fix:`, `docs:`, `chore:`).
+
+Open a PR — the CI matrix runs on Ubuntu / macOS / Windows × Node 18 / 20 / 22.
+
+## Support
+
+If pisesh saves you context-switching time or just makes pi nicer to live in, supporting it directly accelerates development:
+
+- Your support helps: bug fixes, new keybindings, more search modes, integration with other pi extensions.
+- Transparency: I don't sell data; funds go to development time and a coffee or two.
+- One-time sponsors are credited in README and release notes (opt-out available).
+- Monthly sponsors ($3/mo via GitHub Sponsors) get best-effort priority triage for "Sponsor Request" issues.
+
+[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub-EA4AAA?style=for-the-badge&logo=github-sponsors&logoColor=white)](https://github.com/sponsors/Blue-B) [![Buy Me A Coffee](https://img.shields.io/badge/One%E2%80%91time_$3-Buy_Me_A_Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=000)](https://buymeacoffee.com/beckycode7h)
+
+## Acknowledgments
+
+- [pi-coding-agent](https://github.com/earendil-works/pi-coding-agent) by [@mariozechner](https://github.com/mariozechner) — the agent and its extension API that make `/sesh` possible.
+- [interactive-shell example extension](https://github.com/earendil-works/pi-coding-agent/blob/main/examples/extensions/interactive-shell.ts) — pattern reference for `ui.custom` + `tui.stop` TTY handoff.
+- Inspiration for the favorites + tabs UX: [droid CLI](https://github.com/factory-ai/droid) and tmux's [sesh](https://github.com/joshmedeski/sesh).
+
+## Contributors
+
+Thanks to everyone who helps make pisesh better! 🙏
+
+<a href="https://github.com/Blue-B"><img src="https://github.com/Blue-B.png?size=80" width="80" alt="Blue-B" title="Blue-B" /></a>
+
+## Repository activity
+
+![Repobeats analytics image](https://repobeats.axiom.co/api/embed/blue-b-pisesh.svg "Repobeats analytics image")
+
+## Star History
+
+<a href="https://star-history.com/#Blue-B/pisesh&Date">
+  <img src="https://api.star-history.com/svg?repos=Blue-B/pisesh&type=Date" alt="Star History Chart" width="600" />
+</a>
 
 ## License
 
-MIT © [Blue-B](https://github.com/Blue-B)
+MIT © [Blue-B](https://github.com/Blue-B). See [LICENSE](LICENSE).
+
+The pi extension uses the `@earendil-works/pi-coding-agent` API; check pi's own license for that side. The CLI binary is pure Node and has no other licenses to worry about.

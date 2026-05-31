@@ -247,7 +247,7 @@ Thanks to everyone who helps make pisesh better! 🙏
 ## Star History
 
 <a href="https://star-history.com/#Blue-B/pisesh&Date">
-  <img src="https://api.star-history.com/svg?repos=Blue-B/pisesh&type=Date" alt="Star History Chart" width="600" />
+  <img src="https://api.star-history.com/svg?repos=Blue-B/pisesh&type=Date&v=20260531" alt="Star History Chart" width="600" />
 </a>
 
 ## License

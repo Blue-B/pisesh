@@ -1,6 +1,6 @@
 # pisesh
 
-**English** | [한국어](docs/README.ko.md)
+**English** | [한국어](https://github.com/Blue-B/pisesh/blob/main/docs/README.ko.md)
 
 [![npm](https://img.shields.io/npm/v/pisesh?style=for-the-badge&logo=npm&color=CB3837&logoColor=white)](https://www.npmjs.com/package/pisesh)
 [![ci](https://img.shields.io/github/actions/workflow/status/Blue-B/pisesh/ci.yml?branch=main&style=for-the-badge&logo=github-actions&logoColor=white&label=CI)](https://github.com/Blue-B/pisesh/actions/workflows/ci.yml)
@@ -233,22 +233,6 @@ If pisesh saves you context-switching time or just makes pi nicer to live in, su
 - [pi-coding-agent](https://github.com/earendil-works/pi) by [@mariozechner](https://github.com/mariozechner) — the agent and its extension API that make `/sesh` possible.
 - [interactive-shell example extension](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/interactive-shell.ts) — pattern reference for `ui.custom` + `tui.stop` TTY handoff.
 - Inspiration for the favorites + tabs UX: [droid CLI](https://github.com/factory-ai/droid) and tmux's [sesh](https://github.com/joshmedeski/sesh).
-
-## Contributors
-
-Thanks to everyone who helps make pisesh better! 🙏
-
-<a href="https://github.com/Blue-B"><img src="https://github.com/Blue-B.png?size=80" width="80" alt="Blue-B" title="Blue-B" /></a>
-
-## Repository activity
-
-![Repobeats analytics image](https://repobeats.axiom.co/api/embed/a21cb8addd5d2f0ea4ec229c69da5b23855911a8.svg "Repobeats analytics image")
-
-## Star History
-
-<a href="https://star-history.com/#Blue-B/pisesh&Date">
-  <img src="https://api.star-history.com/svg?repos=Blue-B/pisesh&type=Date&v=20260531" alt="Star History Chart" width="600" />
-</a>
 
 ## License
 

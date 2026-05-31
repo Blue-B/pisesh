@@ -240,7 +240,7 @@ Thanks to everyone who helps make pisesh better! 🙏
 
 ## Repository activity
 
-![Repobeats analytics image](https://repobeats.axiom.co/api/embed/blue-b-pisesh.svg "Repobeats analytics image")
+![Repobeats analytics image](https://repobeats.axiom.co/api/embed/a21cb8addd5d2f0ea4ec229c69da5b23855911a8.svg "Repobeats analytics image")
 
 ## Star History
 

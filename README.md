@@ -8,7 +8,7 @@
 [![node](https://img.shields.io/badge/node-%E2%89%A518-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![deps](https://img.shields.io/badge/dependencies-0-brightgreen?style=for-the-badge)](package.json)
 
-**Bookmark, search, and resume [pi coding-agent](https://github.com/earendil-works/pi-coding-agent) sessions with a fast keyboard-driven TUI.**
+**Bookmark, search, and resume [pi coding-agent](https://github.com/earendil-works/pi) sessions with a fast keyboard-driven TUI.**
 
 > `pi --resume` lists every session you ever started. After a week that's 50+ entries with no titles, no tags, no order — just scroll and pray. **pisesh** adds the one thing that was missing: ⭐ favorites, instant search, and a `[NOW]` badge for the session you're attached to.
 
@@ -105,7 +105,7 @@ pisesh --help
 
 ## Tech Stack
 
-[![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/) [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=000)](https://developer.mozilla.org/docs/Web/JavaScript) [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![pi](https://img.shields.io/badge/pi--coding--agent-5C4EE5?style=for-the-badge)](https://github.com/earendil-works/pi-coding-agent)
+[![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/) [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=000)](https://developer.mozilla.org/docs/Web/JavaScript) [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![pi](https://img.shields.io/badge/pi--coding--agent-5C4EE5?style=for-the-badge)](https://github.com/earendil-works/pi)
 
 | Area                | Details                                                                                          |
 | ------------------- | ------------------------------------------------------------------------------------------------ |
@@ -230,8 +230,8 @@ If pisesh saves you context-switching time or just makes pi nicer to live in, su
 
 ## Acknowledgments
 
-- [pi-coding-agent](https://github.com/earendil-works/pi-coding-agent) by [@mariozechner](https://github.com/mariozechner) — the agent and its extension API that make `/sesh` possible.
-- [interactive-shell example extension](https://github.com/earendil-works/pi-coding-agent/blob/main/examples/extensions/interactive-shell.ts) — pattern reference for `ui.custom` + `tui.stop` TTY handoff.
+- [pi-coding-agent](https://github.com/earendil-works/pi) by [@mariozechner](https://github.com/mariozechner) — the agent and its extension API that make `/sesh` possible.
+- [interactive-shell example extension](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/interactive-shell.ts) — pattern reference for `ui.custom` + `tui.stop` TTY handoff.
 - Inspiration for the favorites + tabs UX: [droid CLI](https://github.com/factory-ai/droid) and tmux's [sesh](https://github.com/joshmedeski/sesh).
 
 ## Contributors

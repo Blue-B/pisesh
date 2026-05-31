@@ -42,7 +42,8 @@
   "pi": {
     "extensions": [
       "./extensions/sesh.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/Blue-B/pisesh/main/assets/preview.png"
   },
   "scripts": {
     "test": "node --check bin/pisesh && echo 'pisesh: syntax OK'",

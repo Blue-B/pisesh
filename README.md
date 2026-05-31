@@ -1,5 +1,7 @@
 # pisesh
 
+**English** | [한국어](docs/README.ko.md)
+
 [![npm](https://img.shields.io/npm/v/pisesh?style=for-the-badge&logo=npm&color=CB3837&logoColor=white)](https://www.npmjs.com/package/pisesh)
 [![ci](https://img.shields.io/github/actions/workflow/status/Blue-B/pisesh/ci.yml?branch=main&style=for-the-badge&logo=github-actions&logoColor=white&label=CI)](https://github.com/Blue-B/pisesh/actions/workflows/ci.yml)
 [![license](https://img.shields.io/github/license/Blue-B/pisesh?style=for-the-badge&color=blue)](LICENSE)

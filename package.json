@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Bookmark, search, and resume pi coding-agent sessions with a fast keyboard-driven TUI.",
   "keywords": [
+    "pi-package",
     "pi",
     "pi-coding-agent",
     "session",

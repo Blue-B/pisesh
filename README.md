@@ -10,37 +10,37 @@
 
 **Bookmark, search, and resume [pi coding-agent](https://github.com/earendil-works/pi) sessions with a fast keyboard-driven TUI.**
 
-> `pi --resume` lists every session you ever started. After a week that's 50+ entries with no titles, no tags, no order — just scroll and pray. **pisesh** adds the one thing that was missing: ⭐ favorites, instant search, and a `[NOW]` badge for the session you're attached to.
+> `pi --resume` lists every session you ever started. After a week that's 50+ entries with no titles, no tags, and no order, so you just scroll and hope. pisesh adds what was missing: ⭐ favorites, instant search, and a `[NOW]` badge for the session you're attached to.
 
 ## Preview
 
 <p align="center">
-  <img src="assets/preview.png" alt="pisesh — Favorites tab in a real Windows Terminal session" width="100%">
+  <img src="assets/preview.png" alt="pisesh Favorites tab in a real Windows Terminal session" width="100%">
 </p>
 
 <p align="center"><sub>Real capture: ★ starred session at the top, the rest available behind the <b>Today</b>, <b>Here</b>, and <b>All</b> tabs. <code>Tab</code> cycles. <code>f</code> stars. <code>Enter</code> resumes.</sub></p>
 
 ## Terminal walkthrough
 
-What the TUI actually looks like, screen by screen. (Demo data — not real sessions.)
+What the TUI looks like, screen by screen. The data below is made up, not real sessions.
 
-**Main list** — the highlighted row is selected, tabs cycle with `Tab`. The green `[NOW]` badge marks the pi session you launched from; the cyan `✎` marks a session you renamed yourself. CJK titles stay column-aligned:
+**Main list.** The highlighted row is the current selection, and `Tab` cycles through the tabs. The green `[NOW]` badge marks the pi session you launched from, and the cyan `✎` marks a session you renamed yourself. CJK titles stay column-aligned:
 
-<p align="center"><img src="assets/screen-list.png" alt="pisesh main list — Favorites tab with Today / Here / All tabs, [NOW] badge, and a renamed session" width="100%"></p>
+<p align="center"><img src="assets/screen-list.png" alt="pisesh main list, Favorites tab with Today / Here / All tabs, the NOW badge, and a renamed session" width="100%"></p>
 
-**`e` — rename a session.** First user prompt is a lousy title for a long-lived thread. Press `e` to set your own; it's stored as an override (the session jsonl is never touched) and the session gets a `✎` marker in the list:
+**`e` renames a session.** The first user prompt makes a poor title for a thread you keep coming back to, so press `e` to set your own. It's saved as an override (the session jsonl is never touched) and the session gets a `✎` marker in the list:
 
-<p align="center"><img src="assets/screen-rename.png" alt="pisesh edit-name panel — setting a custom display title" width="100%"></p>
+<p align="center"><img src="assets/screen-rename.png" alt="pisesh edit-name panel for setting a custom display title" width="100%"></p>
 
-**`p` — re-point the working directory** with an arrow-key directory browser. This is the cwd pi will actually `cd` into on resume, and it's what the `Here` tab filters on. `s` locks in the highlighted directory:
+**`p` re-points the working directory** through an arrow-key directory browser. This is the cwd pi actually `cd`s into on resume, and it's also what the `Here` tab filters on. Press `s` to lock in the highlighted directory:
 
-<p align="center"><img src="assets/screen-cwd.png" alt="pisesh cwd browser — arrow-key directory picker for the resume / Here directory" width="100%"></p>
+<p align="center"><img src="assets/screen-cwd.png" alt="pisesh cwd browser, an arrow-key directory picker for the resume and Here directory" width="100%"></p>
 
-The **`Here` tab** shows only sessions whose effective cwd matches the directory you launched pisesh from — so inside a project you see just that project's threads, no scrolling past your home-dir scratch sessions.
+The **`Here` tab** shows only sessions whose effective cwd matches the directory you launched pisesh from. Inside a project you see just that project's threads, without scrolling past your home-dir scratch sessions.
 
 ## Why pisesh
 
-Pi accumulates sessions across many working directories — your home, several project dirs, scratch tmux panes. The built-in resume picker is alphabetical-ish and forgets context. After a few weeks:
+Pi accumulates sessions across many working directories: your home, several project dirs, scratch tmux panes. The built-in resume picker is roughly alphabetical and forgets context. After a few weeks:
 
 - You can't tell which session was "the one where you fixed the auth bug"
 - You can't pin the 3-4 long-running threads you keep going back to
@@ -59,7 +59,7 @@ pisesh is a **single-file Node script** (no dependencies, ~900 LoC) that gives y
 | Fix where a session resumes                | `p` opens an arrow-key directory browser; sets the cwd pi `cd`s into         |
 | Find a session by what you said            | `/` searches id + project + first user prompt + custom title                 |
 | Know which session you're attached to      | `[NOW]` badge on the live session (passed from pi via env var)               |
-| Keep your terminal clean                   | Alt-screen buffer — exit restores your terminal byte-for-byte (like vim)     |
+| Keep your terminal clean                   | Alt-screen buffer, so quitting puts your terminal back the way it was (like vim) |
 | Read Korean / Chinese / Japanese prompts   | Display-width-aware truncation; columns never blow up on CJK                 |
 | Open from anywhere                         | Run as standalone `pisesh` shell command, or `/sesh` inside pi               |
 | Zero install pain                          | No build step, no native deps, runs on Node 18+ everywhere                   |
@@ -103,9 +103,9 @@ Pi-extension side: drop `extensions/sesh.ts` into `~/.pi/agent/extensions/` and 
 | `↑` `↓` / `j` `k`            | move cursor                                                  |
 | `Tab` / `h` / `l`            | switch tab (`★ Favorites` → `Today` → `Here` → `All`)         |
 | `f` / `Space`                | star / unstar the selected session                           |
-| `Enter`                      | resume — spawns `pi --session <id>` in the session's (or overridden) cwd |
-| `e`                          | edit name — set a custom display title (marked `✎` in list)  |
-| `p`                          | edit cwd — arrow-key directory browser; sets resume / `Here` dir |
+| `Enter`                      | resume the session; runs `pi --session <id>` in its (or the overridden) cwd |
+| `e`                          | edit name: set a custom display title, shown with `✎` in the list |
+| `p`                          | edit cwd with an arrow-key directory browser; sets the resume / `Here` dir |
 | `d`                          | session details (full prompt, file, byte size, timestamps)   |
 | `/`                          | search by id / project / first user prompt / custom title    |
 | `Esc`                        | clear search first, then quit                                |
@@ -134,7 +134,7 @@ pisesh --help
 | ------------------- | ------------------------------------------------------------------------------------------------ |
 | Runtime             | Node.js ≥ 18 (uses only built-in modules: `fs`, `path`, `os`, `child_process`, `readline`)       |
 | TUI rendering       | Raw ANSI escape sequences (no `blessed` / `ink` / `chalk` dependency)                            |
-| Alt screen buffer   | `\x1b[?1049h` / `\x1b[?1049l` — same primitive as `vim`, `less`, `htop`, droid CLI               |
+| Alt screen buffer   | `\x1b[?1049h` / `\x1b[?1049l`, the same primitive `vim`, `less`, `htop`, and droid CLI use         |
 | Input               | Node's `readline.emitKeypressEvents` in raw mode                                                 |
 | Width calculation   | UAX #11 East Asian Width ranges, compressed to ~10 inline range checks                           |
 | Pi extension        | TypeScript factory using `@earendil-works/pi-coding-agent` extension API (`ui.custom`, `tui.stop`) |
@@ -144,7 +144,7 @@ pisesh --help
 
 ### What it explicitly does **not** depend on
 
-- No `npm install` for the bundled CLI runtime — true zero-dep
+- No `npm install` for the bundled CLI runtime; it's genuinely zero-dependency
 - No native binaries / GPU / ffmpeg / database
 - No network calls, no telemetry, no analytics
 - No daemon / background process
@@ -155,7 +155,7 @@ pisesh --help
 | ---------- | ----------------------------------------------------------- |
 | Favorites  | `~/.pi/agent/favorites.json`                                |
 | Overrides  | `~/.pi/agent/pisesh-meta.json` (per-session custom title / cwd, keyed by session id) |
-| Sessions   | `~/.pi/agent/sessions/<projectSlug>/<timestamp>_<uuid>.jsonl` (pi's native layout — pisesh never writes here) |
+| Sessions   | `~/.pi/agent/sessions/<projectSlug>/<timestamp>_<uuid>.jsonl` (pi's native layout; pisesh never writes here) |
 
 Favorites file shape:
 
@@ -185,8 +185,8 @@ Korean / Chinese / Japanese / fullwidth characters render **2 cells wide** in te
 
 ## Requirements
 
-- **Node.js ≥ 18** (uses optional chaining, `for…of` on strings — no transpile needed)
-- A terminal with ANSI escape + alternate screen buffer support — basically every modern emulator:
+- **Node.js ≥ 18** (uses optional chaining and `for…of` on strings, so no transpile step)
+- A terminal with ANSI escape and alternate screen buffer support, which covers basically every modern emulator:
   - Windows: **Windows Terminal**, **WezTerm**, **Alacritty** ✅
   - macOS: **iTerm2**, **Terminal.app**, **WezTerm**, **Alacritty**, **Kitty** ✅
   - Linux: **GNOME Terminal**, **Konsole**, **xterm**, **Alacritty**, **Kitty** ✅
@@ -201,10 +201,10 @@ npm link
 npm test        # node --check + smoke test
 ```
 
-Branching: short-lived `feature/<scope>` or `fix/<scope>` → squash-merge into `main`.
+Branch from `main` with a short-lived `feature/<scope>` or `fix/<scope>`, then squash-merge back.
 Commits: [Conventional Commits](https://www.conventionalcommits.org/) style (`feat:`, `fix:`, `docs:`, `chore:`).
 
-Open a PR — the CI matrix runs on Ubuntu / macOS / Windows × Node 18 / 20 / 22.
+Open a PR. The CI matrix runs on Ubuntu, macOS, and Windows across Node 18, 20, and 22.
 
 ## Support
 
@@ -219,8 +219,8 @@ If pisesh saves you context-switching time or just makes pi nicer to live in, su
 
 ## Acknowledgments
 
-- [pi-coding-agent](https://github.com/earendil-works/pi) by [@mariozechner](https://github.com/mariozechner) — the agent and its extension API that make `/sesh` possible.
-- [interactive-shell example extension](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/interactive-shell.ts) — pattern reference for `ui.custom` + `tui.stop` TTY handoff.
+- [pi-coding-agent](https://github.com/earendil-works/pi) by [@mariozechner](https://github.com/mariozechner), the agent and extension API that make `/sesh` possible.
+- [interactive-shell example extension](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/interactive-shell.ts), the pattern reference for the `ui.custom` + `tui.stop` TTY handoff.
 - Inspiration for the favorites + tabs UX: [droid CLI](https://github.com/factory-ai/droid) and tmux's [sesh](https://github.com/joshmedeski/sesh).
 
 ## License

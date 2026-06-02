@@ -47,7 +47,7 @@ Pi accumulates sessions across many working directories — your home, several p
 - You re-open the wrong session and pollute it with unrelated context
 - You waste time searching by timestamp guessing
 
-pisesh is a **single-file Node script** (no dependencies, ~600 LoC) that gives you everything `pi --resume` doesn't.
+pisesh is a **single-file Node script** (no dependencies, ~900 LoC) that gives you everything `pi --resume` doesn't.
 
 ### Value at a glance
 
@@ -57,7 +57,7 @@ pisesh is a **single-file Node script** (no dependencies, ~600 LoC) that gives y
 | Give a thread a real name                  | `e` sets a custom title (marked `✎`); overrides the first-prompt label        |
 | See only the current project's sessions    | `Here` tab filters to sessions whose cwd matches where you launched pisesh   |
 | Fix where a session resumes                | `p` opens an arrow-key directory browser; sets the cwd pi `cd`s into         |
-| Find a session by what you said            | `/` searches id + project + first user prompt                                |
+| Find a session by what you said            | `/` searches id + project + first user prompt + custom title                 |
 | Know which session you're attached to      | `[NOW]` badge on the live session (passed from pi via env var)               |
 | Keep your terminal clean                   | Alt-screen buffer — exit restores your terminal byte-for-byte (like vim)     |
 | Read Korean / Chinese / Japanese prompts   | Display-width-aware truncation; columns never blow up on CJK                 |
@@ -103,11 +103,11 @@ Pi-extension side: drop `extensions/sesh.ts` into `~/.pi/agent/extensions/` and 
 | `↑` `↓` / `j` `k`            | move cursor                                                  |
 | `Tab` / `h` / `l`            | switch tab (`★ Favorites` → `Today` → `Here` → `All`)         |
 | `f` / `Space`                | star / unstar the selected session                           |
-| `Enter`                      | resume — spawns `pi --session <id> --session-dir <dir>`      |
+| `Enter`                      | resume — spawns `pi --session <id>` in the session's (or overridden) cwd |
 | `e`                          | edit name — set a custom display title (marked `✎` in list)  |
 | `p`                          | edit cwd — arrow-key directory browser; sets resume / `Here` dir |
 | `d`                          | session details (full prompt, file, byte size, timestamps)   |
-| `/`                          | search by id / project / first user prompt                   |
+| `/`                          | search by id / project / first user prompt / custom title    |
 | `Esc`                        | clear search first, then quit                                |
 | `q` / `Ctrl-C`               | quit (terminal restored)                                     |
 | `r`                          | rescan session files (after pi starts a new session)         |
@@ -138,7 +138,7 @@ pisesh --help
 | Input               | Node's `readline.emitKeypressEvents` in raw mode                                                 |
 | Width calculation   | UAX #11 East Asian Width ranges, compressed to ~10 inline range checks                           |
 | Pi extension        | TypeScript factory using `@earendil-works/pi-coding-agent` extension API (`ui.custom`, `tui.stop`) |
-| Storage             | Single JSON file at `~/.pi/agent/favorites.json` (`{ ids: [...], updated: "iso" }`)              |
+| Storage             | Two JSON files: `~/.pi/agent/favorites.json` (starred ids) + `~/.pi/agent/pisesh-meta.json` (per-session title / cwd overrides) |
 | Session discovery   | Direct filesystem scan of `~/.pi/agent/sessions/<projectSlug>/*.jsonl`; first 96 KB parsed       |
 | Process model       | Slash command pauses pi's TUI, spawns pisesh with inherited stdio, restarts pi on exit           |
 
@@ -148,27 +148,6 @@ pisesh --help
 - No native binaries / GPU / ffmpeg / database
 - No network calls, no telemetry, no analytics
 - No daemon / background process
-
-## How resume works
-
-```text
-pi (session A)  ── /sesh ──▶  ui.custom + tui.stop()
-                              │
-                              └─▶ spawn pisesh  (PISESH_CURRENT_SESSION=A)
-                                    │  ↑↓ Tab f / Enter on session B
-                                    │
-                                    └─▶ spawn  pi --session B --session-dir <dir>
-                                          │
-                                          │  user works in B …
-                                          │  user types q / ^D
-                                          │
-                                    ◀─── inner pi exits, pisesh exits
-                              │
-                ◀─── tui.start() + requestRender(true)
-pi (session A) continues exactly where it was
-```
-
-The current pi session is paused, not lost. When you finish with the resumed session, you pop back to A with full state intact.
 
 ## Storage
 
@@ -212,22 +191,6 @@ Korean / Chinese / Japanese / fullwidth characters render **2 cells wide** in te
   - macOS: **iTerm2**, **Terminal.app**, **WezTerm**, **Alacritty**, **Kitty** ✅
   - Linux: **GNOME Terminal**, **Konsole**, **xterm**, **Alacritty**, **Kitty** ✅
 - [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) on `$PATH` for the `Enter`-to-resume action
-
-## Roadmap
-
-| Status | Item                                                                            |
-| ------ | ------------------------------------------------------------------------------- |
-| ✅     | Tabs, star/unstar, search, alt-screen, CJK width, `[NOW]` badge, pi `/sesh`     |
-| ✅     | `Here` tab — filter to sessions matching the launch directory                  |
-| ✅     | Inline rename (`e`) — custom display title that overrides the first prompt      |
-| ✅     | Edit cwd (`p`) — arrow-key directory browser sets the resume / `Here` dir       |
-| 🚧     | `n` / `N` jump to next / previous search match (less-style)                     |
-| 🚧     | Highlight matched substring in yellow                                           |
-| 🚧     | Filter by `today/yesterday/this-week`                                           |
-| 🧠     | Optional summarize first-N user prompts via local model for richer titles       |
-| 🧠     | Export starred sessions as a single bundle (share / archive)                    |
-
-PRs welcome for anything in the 🚧 lane.
 
 ## Contributing
 

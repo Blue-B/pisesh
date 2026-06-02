@@ -1,6 +1,6 @@
 {
   "name": "pisesh",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Bookmark, search, and resume pi coding-agent sessions with a fast keyboard-driven TUI.",
   "keywords": [
     "pi-package",

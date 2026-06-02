@@ -44,6 +44,9 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare npm README (strip lang toggle, absolutize asset URLs)
+        run: node scripts/prepare-npm-readme.mjs
+
       - name: Publish to npm
         run: npm publish --provenance --access public
         env:

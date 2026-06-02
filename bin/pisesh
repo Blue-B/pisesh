@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // pisesh — pi session bookmark & resume TUI
-// Tabs: ★ Favorites / Today / All
-// Storage: ~/.pi/agent/favorites.json
+// Tabs: ★ Favorites / Today / Here / All
+// Storage: ~/.pi/agent/favorites.json   (starred session ids)
+//          ~/.pi/agent/pisesh-meta.json (per-session title / cwd overrides)
 // Sessions: ~/.pi/agent/sessions/<projectSlug>/<ts>_<uuid>.jsonl
 
 'use strict';
@@ -16,10 +17,16 @@ const readline = require('readline');
 const HOME = os.homedir();
 const SESSIONS_ROOT = path.join(HOME, '.pi/agent/sessions');
 const FAV_FILE = path.join(HOME, '.pi/agent/favorites.json');
+const META_FILE = path.join(HOME, '.pi/agent/pisesh-meta.json');
 
 // Current session id (set by the /sesh extension before spawning). Lets us
 // flag the currently-attached session in the list with a [NOW] badge.
 const CURRENT_SESSION_ID = (process.env.PISESH_CURRENT_SESSION || '').trim();
+
+// Directory pisesh was launched from. The /sesh extension forwards pi's cwd
+// via PISESH_CWD; falling back to process.cwd() keeps standalone use working.
+// Drives the "Here" tab (sessions whose effective cwd matches this dir).
+const CURRENT_CWD = (process.env.PISESH_CWD || process.cwd() || '').replace(/\/+$/, '');
 
 // ── ANSI ──────────────────────────────────────────────
 const A = {
@@ -65,6 +72,48 @@ function saveFavorites(set) {
 }
 
 let favorites = loadFavorites();
+
+// ── Per-session overrides (title / cwd) ───────────────────
+// Session jsonl files are treated as read-only history, so user edits to a
+// session's display title or resume cwd live in a sidecar file keyed by id:
+//   { overrides: { "<id>": { title?: string, cwd?: string } }, updated }
+function loadMeta() {
+  try {
+    const data = JSON.parse(fs.readFileSync(META_FILE, 'utf8'));
+    return (data && typeof data.overrides === 'object' && data.overrides) || {};
+  } catch { return {}; }
+}
+
+function saveMeta(overrides) {
+  const data = { overrides, updated: new Date().toISOString() };
+  try {
+    fs.mkdirSync(path.dirname(META_FILE), { recursive: true });
+    fs.writeFileSync(META_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error('save meta failed:', e.message);
+  }
+}
+
+let meta = loadMeta();
+
+// Override record for one session id (always returns an object, never null).
+// Used by the per-session getters, which can't read the global `meta`
+// directly because scanSessions() shadows it with a local variable.
+function overridesFor(id) { return meta[id] || {}; }
+
+// Set (or clear, when value is empty) one override field for a session, then
+// persist. Empty string deletes the field so the row falls back to defaults;
+// an emptied override object is dropped entirely to keep the file tidy.
+function setOverride(id, field, value) {
+  if (!id) return;
+  const v = (value || '').trim();
+  const entry = meta[id] || {};
+  if (v) entry[field] = v;
+  else delete entry[field];
+  if (Object.keys(entry).length) meta[id] = entry;
+  else delete meta[id];
+  saveMeta(meta);
+}
 
 // ── Project slug decode ───────────────────────────────
 // pi encodes cwd by replacing '/' with '-' and wrapping in '--…--'
@@ -160,6 +209,15 @@ function scanSessions() {
         size: st.size,
         get favored() { return favorites.has(this.id); },
         get isCurrent() { return CURRENT_SESSION_ID !== '' && this.id === CURRENT_SESSION_ID; },
+        // User overrides (sidecar meta). cwd: from is the original recorded cwd.
+        get titleOverride() { return (overridesFor(this.id).title || '').trim(); },
+        get cwdOverride() { return (overridesFor(this.id).cwd || '').trim(); },
+        // Name shown in the list: custom title > first prompt > id fallback.
+        get title() {
+          return this.titleOverride || this.prompt || `(no prompt) ${this.id.slice(0, 8)}`;
+        },
+        // cwd actually used to resume / filter by "Here": override wins.
+        get effectiveCwd() { return this.cwdOverride || this.cwd; },
       });
     }
   }
@@ -169,11 +227,19 @@ function scanSessions() {
 
 // ── State ─────────────────────────────────────────────
 let sessions = [];
-let tabs = ['★ Favorites', 'Today', 'All'];
+let tabs = ['★ Favorites', 'Today', 'Here', 'All'];
 let tabIdx = 0;
 let cursor = 0;
 let filter = '';
-let mode = 'list';      // list | filter | details
+let mode = 'list';      // list | filter | details | edit | browse
+// edit mode state (title text editor)
+let editField = '';     // 'title' | 'cwd'
+let editBuffer = '';
+let editTarget = null;  // the session being edited
+// browse mode state (arrow-key cwd directory picker)
+let browseDir = '';        // directory currently being browsed (absolute)
+let browseEntries = [];    // [{ label, kind:'use'|'up'|'dir', path }]
+let browseSel = 0;         // selected row in browseEntries
 
 // ── Filtering by tab ──────────────────────────────────
 function visibleSessions() {
@@ -185,6 +251,11 @@ function visibleSessions() {
   } else if (tab === 'Today') {
     const today = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD
     list = list.filter(s => new Date(s.mtime).toLocaleDateString('sv-SE') === today);
+  } else if (tab === 'Here') {
+    // Only sessions whose effective cwd is the directory pisesh was launched
+    // from (trailing slashes normalized so /foo and /foo/ match).
+    const here = CURRENT_CWD.replace(/\/+$/, '');
+    list = list.filter(s => (s.effectiveCwd || '').replace(/\/+$/, '') === here);
   }
 
   if (filter) {
@@ -192,7 +263,8 @@ function visibleSessions() {
     list = list.filter(s =>
       s.id.toLowerCase().includes(q) ||
       s.project.toLowerCase().includes(q) ||
-      s.prompt.toLowerCase().includes(q)
+      s.prompt.toLowerCase().includes(q) ||
+      s.title.toLowerCase().includes(q)
     );
   }
   return list;
@@ -290,6 +362,8 @@ function visLen(s) {
 
 // ── Render ────────────────────────────────────────────
 function render() {
+  if (mode === 'edit') return renderEdit();
+  if (mode === 'browse') return renderBrowse();
   if (mode === 'details') return renderDetails();
   renderList();
 }
@@ -337,6 +411,8 @@ function renderList() {
       hint = '(no favorites yet — press f on any session to star it)';
     } else if (tabs[tabIdx] === 'Today') {
       hint = '(no sessions today — Tab to see All)';
+    } else if (tabs[tabIdx] === 'Here') {
+      hint = `(no sessions in ${CURRENT_CWD || 'this dir'} — Tab to see All)`;
     } else {
       hint = '(no sessions in this view)';
     }
@@ -348,11 +424,13 @@ function renderList() {
       const star = s.favored ? A.yel + '★' + A.R : ' ';
       const arrow = sel ? A.cyn + '▶' + A.R : ' ';
       const ts = A.gry + fmtTs(s.mtime) + A.R;
-      const cwd = A.mag + pad(shortCwd(s.cwd), 14) + A.R;
+      const cwd = A.mag + pad(shortCwd(s.effectiveCwd), 14) + A.R;
       const badge = s.isCurrent ? A.grn + A.B + '[NOW]' + A.R + ' ' : '';
-      const promptMax = Math.max(20, W - 38 - (s.isCurrent ? 7 : 0));
-      const prompt = trunc(s.prompt || `(no prompt) ${s.id.slice(0, 8)}`, promptMax);
-      const rowText = ` ${arrow} ${star} ${ts}  ${cwd}  ${badge}${prompt}`;
+      // ✎ marks a user-renamed session so it's clear the label isn't the prompt.
+      const pen = s.titleOverride ? A.cyn + '✎' + A.R + ' ' : '';
+      const titleMax = Math.max(20, W - 38 - (s.isCurrent ? 7 : 0) - (s.titleOverride ? 2 : 0));
+      const title = trunc(s.title, titleMax);
+      const rowText = ` ${arrow} ${star} ${ts}  ${cwd}  ${badge}${pen}${title}`;
       if (sel) {
         const pad2 = ' '.repeat(Math.max(0, W - visLen(rowText) - 1));
         out += A.bgBlu + rowText + pad2 + A.R + '\n';
@@ -369,14 +447,52 @@ function renderList() {
   // Footer
   out += A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
   out += ' ' + A.D + '↑↓' + A.R + ' move  '
-      + A.D + 'Tab' + A.R + ' next tab  '
+      + A.D + 'Tab' + A.R + ' tab  '
       + A.D + 'f' + A.R + ' star  '
       + A.D + 'Enter' + A.R + ' resume  '
+      + A.D + 'e' + A.R + ' edit name  '
+      + A.D + 'p' + A.R + ' edit cwd  '
       + A.D + 'd' + A.R + ' details  '
       + A.D + '/' + A.R + ' search  '
-      + A.D + 'r' + A.R + ' refresh  '
-      + A.D + 'q/Esc' + A.R + ' quit' + '\n';
+      + A.D + 'q' + A.R + ' quit' + A.R + '\n';
 
+  process.stdout.write(out);
+}
+
+// Inline editor for a session's title or cwd. Renders a small focused panel
+// so the user always sees which session + field they're changing.
+function renderEdit() {
+  const W = process.stdout.columns || 100;
+  const s = editTarget;
+  let out = A.clr;
+  const label = editField === 'cwd' ? 'working directory (cwd)' : 'display title';
+  out += ' ' + A.B + A.cyn + 'pisesh' + A.R + A.D + '  edit ' + label + A.R + '\n\n';
+  if (!s) { out += ' (no session)\n'; process.stdout.write(out); return; }
+
+  const row = (k, v, color = A.R) => ` ${A.D}${pad(k, 11)}${A.R} ${color}${v}${A.R}\n`;
+  out += row('id', s.id, A.cyn);
+  out += row('title', s.title);
+  out += row('cwd', s.effectiveCwd, A.mag);
+  if (editField === 'cwd') out += row('recorded', s.cwd, A.gry);
+  out += '\n';
+
+  out += ' ' + A.B + (editField === 'cwd' ? 'New cwd' : 'New title') + ':' + A.R + '\n';
+  out += ' ' + A.cyn + '›' + A.R + ' ' + editBuffer + A.I + ' ' + A.R + '\n';
+  if (editField === 'cwd') {
+    const exists = editBuffer.trim() && fs.existsSync(editBuffer.trim());
+    out += ' ' + A.D + (editBuffer.trim()
+      ? (exists ? A.grn + 'path exists' : A.yel + 'path not found (saved anyway)')
+      : 'empty → clears override, falls back to recorded cwd') + A.R + '\n';
+  } else {
+    out += ' ' + A.D + (editBuffer.trim()
+      ? 'saves a custom name for this session'
+      : 'empty → clears override, falls back to first prompt') + A.R + '\n';
+  }
+
+  out += '\n' + A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
+  out += ' ' + A.D + 'Enter' + A.R + ' save  '
+      + A.D + 'Ctrl-U' + A.R + ' clear  '
+      + A.D + 'Esc' + A.R + ' cancel' + '\n';
   process.stdout.write(out);
 }
 
@@ -392,9 +508,11 @@ function renderDetails() {
   out += row('id', s.id, A.cyn);
   if (s.isCurrent) out += row('current', '● this is the attached pi session', A.grn);
   out += row('starred', s.favored ? '★ yes' : '☆ no', s.favored ? A.yel : A.gry);
+  out += row('title', s.title + (s.titleOverride ? A.cyn + '  (custom)' + A.R : ''));
   out += row('started', new Date(s.ts).toLocaleString());
   out += row('updated', new Date(s.mtime).toLocaleString());
-  out += row('cwd', s.cwd, A.mag);
+  out += row('cwd', s.effectiveCwd + (s.cwdOverride ? A.cyn + '  (custom)' + A.R : ''), A.mag);
+  if (s.cwdOverride) out += row('recorded', s.cwd, A.gry);
   out += row('project', s.project);
   out += row('size', fmtSize(s.size));
   out += row('file', s.file, A.gry);
@@ -406,8 +524,10 @@ function renderDetails() {
   out += '\n' + A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
   out += ' ' + A.D + 'Enter' + A.R + ' resume  '
       + A.D + 'f' + A.R + ' star  '
+      + A.D + 'e' + A.R + ' edit name  '
+      + A.D + 'p' + A.R + ' edit cwd  '
       + A.D + 'c' + A.R + ' copy id  '
-      + A.D + 'Esc/d/q' + A.R + ' back' + '\n';
+      + A.D + 'Esc/d/q' + A.R + ' back' + A.R + '\n';
 
   process.stdout.write(out);
 }
@@ -438,6 +558,8 @@ function setupInput() {
   process.stdin.on('keypress', (str, key) => {
     try {
       if (mode === 'filter') handleFilter(str, key);
+      else if (mode === 'edit') handleEdit(str, key);
+      else if (mode === 'browse') handleBrowse(str, key);
       else if (mode === 'details') handleDetails(str, key);
       else handleList(str, key);
       render();
@@ -488,6 +610,8 @@ function handleList(str, key) {
   }
   else if (k === 'return') resumeSession(list[cursor]);
   else if (k === 'd') { if (list[cursor]) mode = 'details'; }
+  else if (k === 'e') startEdit(list[cursor], 'title');
+  else if (k === 'p') startBrowse(list[cursor]);
   else if (str === '/') { mode = 'filter'; }
   else if (k === 'r') { sessions = scanSessions(); cursor = 0; }
   else if (k === 'home') cursor = 0;
@@ -519,6 +643,155 @@ function handleDetails(str, key) {
     // Try clipboard via clip.exe (WSL) or pbcopy/xclip
     tryCopy(s.id);
   }
+  if (k === 'e' && s) startEdit(s, 'title');
+  if (k === 'p' && s) startBrowse(s);
+}
+
+// Open the inline editor for a session's title or cwd, seeded with the
+// current override (or recorded cwd, so the user can tweak rather than retype).
+function startEdit(s, field) {
+  if (!s) return;
+  editTarget = s;
+  editField = field;
+  editBuffer = field === 'cwd' ? (s.cwdOverride || s.cwd || '') : (s.titleOverride || '');
+  mode = 'edit';
+}
+
+function handleEdit(str, key) {
+  const k = key.name;
+  if (key.ctrl && k === 'c') return quit();
+  if (k === 'escape') { mode = 'list'; editTarget = null; return; }
+  if (k === 'return') {
+    if (editTarget) setOverride(editTarget.id, editField, editBuffer);
+    mode = 'list';
+    editTarget = null;
+    return;
+  }
+  if (k === 'backspace') { editBuffer = editBuffer.slice(0, -1); return; }
+  if (key.ctrl && k === 'u') { editBuffer = ''; return; }
+  // Accept any printable char (incl. spaces, '/', CJK) but not control combos.
+  if (str && !key.ctrl && str !== '\r' && str !== '\n' && str !== '\t') editBuffer += str;
+}
+
+// ── cwd directory browser (arrow-key picker) ──────────────────
+// List immediate subdirectories of `dir` (symlinks-to-dirs included),
+// alphabetically, swallowing permission errors so the picker never crashes.
+function listDirs(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter(d => {
+        try {
+          if (d.isDirectory()) return true;
+          if (d.isSymbolicLink()) return fs.statSync(path.join(dir, d.name)).isDirectory();
+        } catch { /* unreadable entry */ }
+        return false;
+      })
+      .map(d => d.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch { return []; }
+}
+
+// Rebuild the browser's entry list for `dir`. Falls back to the nearest
+// existing ancestor (or '/') if the path is gone, so resume targets that no
+// longer exist still open somewhere sensible.
+function buildBrowse(dir) {
+  let d = dir || '/';
+  // Walk up until we hit something that exists and is a directory.
+  while (d && d !== '/' && (!fs.existsSync(d) || !safeIsDir(d))) d = path.dirname(d);
+  if (!fs.existsSync(d)) d = '/';
+  browseDir = path.resolve(d);
+  const entries = [{ label: '[· use THIS directory]', kind: 'use', path: browseDir }];
+  if (browseDir !== '/') entries.push({ label: '..  (parent)', kind: 'up', path: path.dirname(browseDir) });
+  for (const name of listDirs(browseDir)) entries.push({ label: name + '/', kind: 'dir', path: path.join(browseDir, name) });
+  browseEntries = entries;
+  browseSel = 0;
+}
+
+function safeIsDir(p) { try { return fs.statSync(p).isDirectory(); } catch { return false; } }
+
+// Enter the cwd picker for a session, seeded at its current effective cwd.
+function startBrowse(s) {
+  if (!s) return;
+  editTarget = s;
+  editField = 'cwd';
+  buildBrowse(s.cwdOverride || s.cwd || CURRENT_CWD || '/');
+  mode = 'browse';
+}
+
+// Persist the currently-browsed directory as this session's cwd override.
+function commitBrowse() {
+  if (editTarget) setOverride(editTarget.id, 'cwd', browseDir);
+  mode = 'list';
+  editTarget = null;
+}
+
+function handleBrowse(str, key) {
+  const k = key.name;
+  if (key.ctrl && k === 'c') return quit();
+  if (k === 'escape') { mode = 'list'; editTarget = null; return; }
+  if (k === 'up' || k === 'k') browseSel = Math.max(0, browseSel - 1);
+  else if (k === 'down' || k === 'j') browseSel = Math.min(browseEntries.length - 1, browseSel + 1);
+  else if (k === 'pageup') browseSel = Math.max(0, browseSel - 10);
+  else if (k === 'pagedown') browseSel = Math.min(browseEntries.length - 1, browseSel + 10);
+  else if (k === 'home') browseSel = 0;
+  else if (k === 'end') browseSel = browseEntries.length - 1;
+  // Left / h: go to parent directory.
+  else if (k === 'left' || k === 'h') { if (browseDir !== '/') buildBrowse(path.dirname(browseDir)); }
+  // Right / l / Enter: open the highlighted dir (or commit if it's the
+  // "use THIS directory" / parent row).
+  else if (k === 'right' || k === 'l' || k === 'return') {
+    const e = browseEntries[browseSel];
+    if (!e) return;
+    if (e.kind === 'use') return commitBrowse();
+    buildBrowse(e.path);
+  }
+  // s: select the directory we're currently inside, from anywhere.
+  else if (k === 's') commitBrowse();
+}
+
+// Focused full-screen directory picker. ANSI-padded selected row matches the
+// main list look so it feels like the same widget.
+function renderBrowse() {
+  const W = process.stdout.columns || 100;
+  const H = process.stdout.rows || 30;
+  const s = editTarget;
+  let out = A.clr;
+  out += ' ' + A.B + A.cyn + 'pisesh' + A.R + A.D + '  edit cwd — pick working directory' + A.R + '\n\n';
+  if (!s) { out += ' (no session)\n'; process.stdout.write(out); return; }
+
+  const row = (key, v, color = A.R) => ` ${A.D}${pad(key, 9)}${A.R} ${color}${v}${A.R}\n`;
+  out += row('session', trunc(s.title, W - 14));
+  out += row('current', s.effectiveCwd, A.mag);
+  out += '\n ' + A.B + 'In:' + A.R + ' ' + A.cyn + trunc(browseDir, W - 6) + A.R + '\n';
+  out += A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
+
+  const headerH = 7;
+  const footerH = 3;
+  const usable = Math.max(3, H - headerH - footerH);
+  if (browseSel >= browseEntries.length) browseSel = Math.max(0, browseEntries.length - 1);
+  const start = Math.max(0, Math.min(browseSel - Math.floor(usable / 2), browseEntries.length - usable));
+  const end = Math.min(browseEntries.length, start + usable);
+  for (let i = start; i < end; i++) {
+    const e = browseEntries[i];
+    const sel = i === browseSel;
+    const arrow = sel ? A.cyn + '▶' + A.R : ' ';
+    const color = e.kind === 'use' ? A.grn + A.B : (e.kind === 'up' ? A.yel : A.R);
+    const rowText = ` ${arrow} ${color}${trunc(e.label, W - 6)}${A.R}`;
+    if (sel) {
+      const pad2 = ' '.repeat(Math.max(0, W - visLen(rowText) - 1));
+      out += A.bgBlu + rowText + pad2 + A.R + '\n';
+    } else out += rowText + '\n';
+  }
+  const linesUsed = (end - start) || 1;
+  for (let i = 0; i < usable - linesUsed; i++) out += '\n';
+
+  out += A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
+  out += ' ' + A.D + '↑↓' + A.R + ' move  '
+      + A.D + '→/Enter' + A.R + ' open dir  '
+      + A.D + '←' + A.R + ' parent  '
+      + A.grn + A.B + 's' + A.R + A.D + ' SELECT this dir  '
+      + A.D + 'Esc' + A.R + ' cancel' + A.R + '\n';
+  process.stdout.write(out);
 }
 
 function tryCopy(text) {
@@ -543,10 +816,12 @@ function resumeSession(s) {
   process.stdin.pause();
 
   const projectDir = path.dirname(s.file);
-  // Spawn pi in the original cwd with the session restored
+  // Resume in the session's effective cwd (user override wins over recorded),
+  // falling back to pisesh's own cwd if that directory no longer exists.
+  const targetCwd = s.effectiveCwd;
   const child = spawn('pi', ['--session', s.id, '--session-dir', projectDir], {
     stdio: 'inherit',
-    cwd: fs.existsSync(s.cwd) ? s.cwd : process.cwd(),
+    cwd: targetCwd && fs.existsSync(targetCwd) ? targetCwd : process.cwd(),
   });
   child.on('exit', code => process.exit(code || 0));
   child.on('error', err => {
@@ -578,16 +853,25 @@ Usage:
 
 TUI keys:
   ↑↓ / j k         move cursor
-  Tab / h l        switch tab  (★ Favorites → Today → All)
+  Tab / h l        switch tab  (★ Favorites → Today → Here → All)
   f / Space        toggle favorite
-  Enter            resume session (spawns 'pi --session …')
+  Enter            resume session (spawns 'pi --session …' in its cwd)
+  e                edit name (custom display title)
+  p                edit cwd — arrow-key directory browser
+                   (↑↓ move, →/Enter open dir, ← parent, s select, Esc cancel)
+                   sets the working directory used on resume / "Here" tab
   d                show details
-  /                search (id / project / prompt; Esc clears first, then quits)
+  /                search (id / project / prompt / title)
   r                rescan session files
   q / Esc / Ctrl-C quit
 
+Tabs:
+  Here             only sessions whose cwd matches the directory pisesh was
+                   launched from (\$PISESH_CWD, else process cwd)
+
 Files:
   Favorites: ${FAV_FILE}
+  Overrides: ${META_FILE}
   Sessions : ${SESSIONS_ROOT}/<project>/<ts>_<uuid>.jsonl`);
 }
 

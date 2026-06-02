@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] — 2026-06-03
+
+### Added
+- **`Here` tab** — filters the list to sessions whose effective cwd matches the directory pisesh was launched from. Tab order is now **★ Favorites → Today → Here → All**.
+- **Inline rename (`e`)** — set a custom display title that overrides the first-prompt label; renamed sessions are marked with a cyan `✎` in the list.
+- **Edit cwd (`p`)** — arrow-key directory browser to re-point the working directory pi resumes into (also drives the `Here` filter).
+- Per-session overrides (custom title / cwd) persist to `~/.pi/agent/pisesh-meta.json`, keyed by session id. Session jsonl files remain read-only.
+- README terminal screenshots for the list view, rename panel, and cwd browser.
+
 ## [0.1.0] — 2026-05-31
 
 Initial release.

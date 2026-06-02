@@ -18,7 +18,25 @@
   <img src="assets/preview.png" alt="pisesh — Favorites tab in a real Windows Terminal session" width="100%">
 </p>
 
-<p align="center"><sub>Real capture: ★ starred session at the top, the rest available behind the <b>Today</b> and <b>All</b> tabs. <code>Tab</code> cycles. <code>f</code> stars. <code>Enter</code> resumes.</sub></p>
+<p align="center"><sub>Real capture: ★ starred session at the top, the rest available behind the <b>Today</b>, <b>Here</b>, and <b>All</b> tabs. <code>Tab</code> cycles. <code>f</code> stars. <code>Enter</code> resumes.</sub></p>
+
+## Terminal walkthrough
+
+What the TUI actually looks like, screen by screen. (Demo data — not real sessions.)
+
+**Main list** — the highlighted row is selected, tabs cycle with `Tab`. The green `[NOW]` badge marks the pi session you launched from; the cyan `✎` marks a session you renamed yourself. CJK titles stay column-aligned:
+
+<p align="center"><img src="assets/screen-list.png" alt="pisesh main list — Favorites tab with Today / Here / All tabs, [NOW] badge, and a renamed session" width="100%"></p>
+
+**`e` — rename a session.** First user prompt is a lousy title for a long-lived thread. Press `e` to set your own; it's stored as an override (the session jsonl is never touched) and the session gets a `✎` marker in the list:
+
+<p align="center"><img src="assets/screen-rename.png" alt="pisesh edit-name panel — setting a custom display title" width="100%"></p>
+
+**`p` — re-point the working directory** with an arrow-key directory browser. This is the cwd pi will actually `cd` into on resume, and it's what the `Here` tab filters on. `s` locks in the highlighted directory:
+
+<p align="center"><img src="assets/screen-cwd.png" alt="pisesh cwd browser — arrow-key directory picker for the resume / Here directory" width="100%"></p>
+
+The **`Here` tab** shows only sessions whose effective cwd matches the directory you launched pisesh from — so inside a project you see just that project's threads, no scrolling past your home-dir scratch sessions.
 
 ## Why pisesh
 
@@ -36,13 +54,16 @@ pisesh is a **single-file Node script** (no dependencies, ~600 LoC) that gives y
 | Need                                       | What you get                                                                 |
 | ------------------------------------------ | ---------------------------------------------------------------------------- |
 | Mark important sessions                    | ⭐ Star/unstar with one keystroke; favorites persist to one global JSON       |
+| Give a thread a real name                  | `e` sets a custom title (marked `✎`); overrides the first-prompt label        |
+| See only the current project's sessions    | `Here` tab filters to sessions whose cwd matches where you launched pisesh   |
+| Fix where a session resumes                | `p` opens an arrow-key directory browser; sets the cwd pi `cd`s into         |
 | Find a session by what you said            | `/` searches id + project + first user prompt                                |
 | Know which session you're attached to      | `[NOW]` badge on the live session (passed from pi via env var)               |
 | Keep your terminal clean                   | Alt-screen buffer — exit restores your terminal byte-for-byte (like vim)     |
 | Read Korean / Chinese / Japanese prompts   | Display-width-aware truncation; columns never blow up on CJK                 |
 | Open from anywhere                         | Run as standalone `pisesh` shell command, or `/sesh` inside pi               |
 | Zero install pain                          | No build step, no native deps, runs on Node 18+ everywhere                   |
-| Trust it with your history                 | pisesh only writes one favorites file; session jsonl files are read-only     |
+| Trust it with your history                 | pisesh writes only two small JSON files (favorites + overrides); session jsonl files are read-only |
 
 ## Getting started
 
@@ -80,9 +101,11 @@ Pi-extension side: drop `extensions/sesh.ts` into `~/.pi/agent/extensions/` and 
 | Key                          | Action                                                       |
 | ---------------------------- | ------------------------------------------------------------ |
 | `↑` `↓` / `j` `k`            | move cursor                                                  |
-| `Tab` / `h` / `l`            | switch tab (`★ Favorites` → `Today` → `All`)                 |
+| `Tab` / `h` / `l`            | switch tab (`★ Favorites` → `Today` → `Here` → `All`)         |
 | `f` / `Space`                | star / unstar the selected session                           |
 | `Enter`                      | resume — spawns `pi --session <id> --session-dir <dir>`      |
+| `e`                          | edit name — set a custom display title (marked `✎` in list)  |
+| `p`                          | edit cwd — arrow-key directory browser; sets resume / `Here` dir |
 | `d`                          | session details (full prompt, file, byte size, timestamps)   |
 | `/`                          | search by id / project / first user prompt                   |
 | `Esc`                        | clear search first, then quit                                |
@@ -152,6 +175,7 @@ The current pi session is paused, not lost. When you finish with the resumed ses
 | What       | Where                                                       |
 | ---------- | ----------------------------------------------------------- |
 | Favorites  | `~/.pi/agent/favorites.json`                                |
+| Overrides  | `~/.pi/agent/pisesh-meta.json` (per-session custom title / cwd, keyed by session id) |
 | Sessions   | `~/.pi/agent/sessions/<projectSlug>/<timestamp>_<uuid>.jsonl` (pi's native layout — pisesh never writes here) |
 
 Favorites file shape:
@@ -173,9 +197,9 @@ It's a single global file (not per-project). Back it up by syncing one file.
 Korean / Chinese / Japanese / fullwidth characters render **2 cells wide** in terminals; pisesh measures display width (not JavaScript code-unit length) when truncating and padding. Korean prompts never wrap, columns stay aligned, and the layout looks identical whether the prompt is `hello world` or `안녕하세요 세상`.
 
 ```text
-✓ aitapps         지금 디렉토리에 앱인토스 제출용앱을 만들었는데…
-✓ 공모전          신소재 공학 관련 졸업과제 도와줘…
-✓ WhisperSubTrans 이슈 #26 이전 버전 아닌가 확인…
+✓ webapp          로그인 폼 만들고 인증 엔드포인트 연결…
+✓ 가계부앱         이번 달 지출 분석 화면 설계…
+✓ docs-site       시작하기 가이드 다시 작성…
 ```
 
 (Previously: Korean prompts overflowed to a second line and broke the table.)
@@ -194,12 +218,14 @@ Korean / Chinese / Japanese / fullwidth characters render **2 cells wide** in te
 | Status | Item                                                                            |
 | ------ | ------------------------------------------------------------------------------- |
 | ✅     | Tabs, star/unstar, search, alt-screen, CJK width, `[NOW]` badge, pi `/sesh`     |
+| ✅     | `Here` tab — filter to sessions matching the launch directory                  |
+| ✅     | Inline rename (`e`) — custom display title that overrides the first prompt      |
+| ✅     | Edit cwd (`p`) — arrow-key directory browser sets the resume / `Here` dir       |
 | 🚧     | `n` / `N` jump to next / previous search match (less-style)                     |
 | 🚧     | Highlight matched substring in yellow                                           |
 | 🚧     | Filter by `today/yesterday/this-week`                                           |
 | 🧠     | Optional summarize first-N user prompts via local model for richer titles       |
 | 🧠     | Export starred sessions as a single bundle (share / archive)                    |
-| 🧠     | Inline rename / label (`n` to add a custom title that overrides first prompt)   |
 
 PRs welcome for anything in the 🚧 lane.
 

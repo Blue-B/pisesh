@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.9] — 2026-06-03
+
+### Fixed
+- Name / cwd editor (`e`) now has a real caret. Arrow keys (and `Home` / `End`) move inside the text you already typed, so you can insert or delete in the middle instead of only at the end. Backspace, forward `Delete`, and inserts all act at the caret. Cursor moves by whole code points, so CJK and emoji never get split.
+
 ## [0.1.4] — 2026-06-03
 
 ### Added

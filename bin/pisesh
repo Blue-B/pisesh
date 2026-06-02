@@ -235,6 +235,7 @@ let mode = 'list';      // list | filter | details | edit | browse
 // edit mode state (title text editor)
 let editField = '';     // 'title' | 'cwd'
 let editBuffer = '';
+let editCursor = 0;     // caret position (code-point index into editBuffer)
 let editTarget = null;  // the session being edited
 // browse mode state (arrow-key cwd directory picker)
 let browseDir = '';        // directory currently being browsed (absolute)
@@ -477,7 +478,15 @@ function renderEdit() {
   out += '\n';
 
   out += ' ' + A.B + (editField === 'cwd' ? 'New cwd' : 'New title') + ':' + A.R + '\n';
-  out += ' ' + A.cyn + '›' + A.R + ' ' + editBuffer + A.I + ' ' + A.R + '\n';
+  {
+    // Render the caret in place: text before it, the inverse-highlighted char
+    // under it (or a trailing inverse space at end), then the text after it.
+    const ch = [...editBuffer];
+    const before = ch.slice(0, editCursor).join('');
+    const under = editCursor < ch.length ? ch[editCursor] : ' ';
+    const after = ch.slice(editCursor + 1).join('');
+    out += ' ' + A.cyn + '›' + A.R + ' ' + before + A.I + under + A.R + after + '\n';
+  }
   if (editField === 'cwd') {
     const exists = editBuffer.trim() && fs.existsSync(editBuffer.trim());
     out += ' ' + A.D + (editBuffer.trim()
@@ -491,6 +500,7 @@ function renderEdit() {
 
   out += '\n' + A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
   out += ' ' + A.D + 'Enter' + A.R + ' save  '
+      + A.D + '←→' + A.R + ' move  '
       + A.D + 'Ctrl-U' + A.R + ' clear  '
       + A.D + 'Esc' + A.R + ' cancel' + '\n';
   process.stdout.write(out);
@@ -654,6 +664,7 @@ function startEdit(s, field) {
   editTarget = s;
   editField = field;
   editBuffer = field === 'cwd' ? (s.cwdOverride || s.cwd || '') : (s.titleOverride || '');
+  editCursor = [...editBuffer].length; // start with the caret at the end
   mode = 'edit';
 }
 
@@ -667,10 +678,30 @@ function handleEdit(str, key) {
     editTarget = null;
     return;
   }
-  if (k === 'backspace') { editBuffer = editBuffer.slice(0, -1); return; }
-  if (key.ctrl && k === 'u') { editBuffer = ''; return; }
+  // Operate on code points so CJK / emoji never get split mid-character.
+  const chars = [...editBuffer];
+  if (editCursor > chars.length) editCursor = chars.length;
+  // Move the caret inside the text the user already typed.
+  if (k === 'left')  { editCursor = Math.max(0, editCursor - 1); return; }
+  if (k === 'right') { editCursor = Math.min(chars.length, editCursor + 1); return; }
+  if (k === 'home' || (key.ctrl && k === 'a')) { editCursor = 0; return; }
+  if (k === 'end'  || (key.ctrl && k === 'e')) { editCursor = chars.length; return; }
+  if (k === 'backspace') {
+    if (editCursor > 0) { chars.splice(editCursor - 1, 1); editCursor--; editBuffer = chars.join(''); }
+    return;
+  }
+  if (k === 'delete') { // forward delete (char under the caret)
+    if (editCursor < chars.length) { chars.splice(editCursor, 1); editBuffer = chars.join(''); }
+    return;
+  }
+  if (key.ctrl && k === 'u') { editBuffer = ''; editCursor = 0; return; }
   // Accept any printable char (incl. spaces, '/', CJK) but not control combos.
-  if (str && !key.ctrl && str !== '\r' && str !== '\n' && str !== '\t') editBuffer += str;
+  if (str && !key.ctrl && str !== '\r' && str !== '\n' && str !== '\t') {
+    const ins = [...str];
+    chars.splice(editCursor, 0, ...ins);
+    editCursor += ins.length;
+    editBuffer = chars.join('');
+  }
 }
 
 // ── cwd directory browser (arrow-key picker) ──────────────────

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.10] — 2026-06-09
+
+### Fixed
+- **Resume no longer crashes on sessions interrupted mid-tool-call.** If a session ended while a tool call was still in flight (e.g. an image generation cut off by a usage limit or a closed window), its transcript held a tool call with no recorded result. On resume, pi would re-fire that dead tool and the spawned process could exit non-zero — surfacing as `pisesh exited with code 1`, repeatedly. `resumeSession` now heals the target session first: every orphaned tool call gets a synthetic `[interrupted]` result injected before pi is spawned, so the resumed history is always well-formed and no dead tool is re-run. Idempotent, never throws, and writes a one-time `.bak-orphanheal` backup of the session before modifying it.
+
 ## [0.1.9] — 2026-06-03
 
 ### Fixed

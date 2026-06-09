@@ -838,8 +838,62 @@ function tryCopy(text) {
 }
 
 // ── Actions ───────────────────────────────────────────
+// Heal a session before resuming. On resume, pi re-executes (or chokes on) any
+// toolCall that has no recorded toolResult — e.g. an image generation that was
+// interrupted when the prior session hit a usage limit or was closed mid-tool.
+// Left unhealed, the spawned pi crashes (exit 1), which surfaces to the parent
+// as "pisesh exited with code N". We inject a synthetic "[interrupted]"
+// toolResult for every orphaned toolCall so the resumed history is always
+// well-formed and pi never re-fires a dead tool. Idempotent; never throws.
+function healOrphanedToolCalls(file) {
+  try {
+    const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+    const resultIds = new Set();
+    for (const l of lines) {
+      let o; try { o = JSON.parse(l); } catch { continue; }
+      if (o && o.message && o.message.role === 'toolResult') resultIds.add(o.message.toolCallId);
+    }
+    const rnd = () => Math.random().toString(16).slice(2, 10);
+    const out = [];
+    let inserted = 0, prevSynthId = null;
+    for (const l of lines) {
+      let o; try { o = JSON.parse(l); } catch { out.push(l); continue; }
+      if (prevSynthId && o && typeof o.parentId !== 'undefined') { o.parentId = prevSynthId; prevSynthId = null; }
+      out.push(JSON.stringify(o));
+      const c = o && o.message && o.message.content;
+      if (o && o.message && o.message.role === 'assistant' && Array.isArray(c)) {
+        for (const b of c) {
+          if (b && b.type === 'toolCall' && b.id && !resultIds.has(b.id)) {
+            const synth = {
+              type: 'message', id: rnd(), parentId: o.id,
+              timestamp: new Date().toISOString(),
+              message: {
+                role: 'toolResult', toolCallId: b.id, toolName: b.name,
+                content: [{ type: 'text', text: '[tool call interrupted \u2014 the previous session ended before this tool finished (e.g. usage limit reached or session closed); no result was recorded]' }],
+                isError: true, timestamp: Date.now(),
+              },
+            };
+            out.push(JSON.stringify(synth));
+            resultIds.add(b.id);
+            prevSynthId = synth.id;
+            inserted++;
+          }
+        }
+      }
+    }
+    if (inserted > 0) {
+      try { const bak = file + '.bak-orphanheal'; if (!fs.existsSync(bak)) fs.copyFileSync(file, bak); } catch {}
+      fs.writeFileSync(file, out.join('\n') + '\n');
+    }
+    return inserted;
+  } catch { return 0; }
+}
+
 function resumeSession(s) {
   if (!s) return;
+  // Heal orphaned tool calls before handing off, so resume can't crash the
+  // spawned pi (see healOrphanedToolCalls).
+  try { healOrphanedToolCalls(s.file); } catch {}
   // Leave alt screen + show cursor so the spawned pi takes over a clean
   // main-buffer terminal (it will manage its own alt screen).
   process.stdout.write(A.exitAlt + A.showC);

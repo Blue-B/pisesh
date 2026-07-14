@@ -67,23 +67,22 @@ pisesh is a **single-file Node script** (no dependencies, ~900 LoC) that gives y
 
 ## Getting started
 
-### Quick install (recommended)
+### Install the `/sesh` command in pi (recommended)
 
 ```bash
-# Install both the CLI and the /sesh slash command in one go
 pi install npm:pisesh
 ```
 
-This registers pisesh as a pi extension. Inside any pi session, type `/sesh`.
+This registers pisesh as a pi extension. Inside any pi session, type `/sesh`. The extension runs its bundled CLI, so a global npm installation is not required.
 
-### Standalone CLI only
+### Install the standalone CLI
 
 ```bash
 npm install -g pisesh
 pisesh
 ```
 
-Use this if you want pisesh as a separate shell command and don't need the pi slash binding.
+The standalone `pisesh` shell command requires this global npm installation. It is separate from `pi install npm:pisesh`.
 
 ### From source (developers)
 
@@ -94,7 +93,7 @@ npm link            # symlink ./bin/pisesh into your global PATH
 pisesh --help
 ```
 
-Pi-extension side: drop `extensions/sesh.ts` into `~/.pi/agent/extensions/` and run `/reload` inside pi.
+For local pi testing, run `pi install .` from the cloned repository so the extension and its bundled CLI stay together.
 
 ## Keys
 
@@ -185,7 +184,7 @@ Korean / Chinese / Japanese / fullwidth characters render **2 cells wide** in te
 
 ## Requirements
 
-- **Node.js ≥ 18** (uses optional chaining and `for…of` on strings, so no transpile step)
+- **Node.js ≥ 18 on `PATH`** (the `/sesh` extension uses `node` to run its bundled CLI)
 - A terminal with ANSI escape and alternate screen buffer support, which covers basically every modern emulator:
   - Windows: **Windows Terminal**, **WezTerm**, **Alacritty** ✅
   - macOS: **iTerm2**, **Terminal.app**, **WezTerm**, **Alacritty**, **Kitty** ✅

@@ -67,23 +67,22 @@ pisesh는 **단일 파일 Node 스크립트** (의존성 0, ~900 LoC) 입니다.
 
 ## 설치
 
-### 빠른 설치 (권장)
+### pi에 `/sesh` 설치 (권장)
 
 ```bash
-# CLI + /sesh 슬래시 명령을 한 번에
 pi install npm:pisesh
 ```
 
-pi 익스텐션으로 등록됩니다. pi 안에서 `/sesh` 치면 끝.
+pi 익스텐션으로 등록됩니다. pi 안에서 `/sesh`를 입력하면 번들된 CLI가 실행되므로 글로벌 npm 설치는 필요하지 않습니다.
 
-### 셸 CLI만
+### 독립 셸 CLI 설치
 
 ```bash
 npm install -g pisesh
 pisesh
 ```
 
-pi와 별도로 셸 명령으로만 쓰고 싶을 때.
+셸에서 `pisesh` 명령을 직접 실행하려면 글로벌 npm 설치가 필요합니다. `pi install npm:pisesh`와는 별도입니다.
 
 ### 소스에서 (개발자)
 
@@ -94,7 +93,7 @@ npm link            # ./bin/pisesh 를 글로벌 PATH로 심볼릭
 pisesh --help
 ```
 
-Pi 익스텐션 쪽: `extensions/sesh.ts` 를 `~/.pi/agent/extensions/` 에 떨궈놓고 pi 안에서 `/reload`.
+로컬 pi 테스트는 클론한 저장소에서 `pi install .`을 실행합니다. 익스텐션과 번들 CLI가 같은 패키지에 유지됩니다.
 
 ## 키
 
@@ -185,7 +184,7 @@ pisesh --help
 
 ## 요구 사항
 
-- **Node.js ≥ 18** (optional chaining과 `for…of` on strings를 써서 트랜스파일 불필요)
+- **`PATH`에 등록된 Node.js ≥ 18** (`/sesh` 익스텐션이 번들 CLI를 `node`로 실행)
 - ANSI escape와 alternate screen buffer를 지원하는 터미널, 즉 사실상 모든 모던 에뮬레이터:
   - Windows: **Windows Terminal**, **WezTerm**, **Alacritty** ✅
   - macOS: **iTerm2**, **Terminal.app**, **WezTerm**, **Alacritty**, **Kitty** ✅

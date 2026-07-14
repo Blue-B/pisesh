@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.11] - 2026-07-14
+
+### Fixed
+- `/sesh` now launches the CLI bundled with the pi package instead of requiring `pisesh` on the user's `PATH`.
+- Clarified that the standalone `pisesh` shell command requires `npm install -g pisesh`.
+
 ## [0.1.10] — 2026-06-09
 
 ### Fixed

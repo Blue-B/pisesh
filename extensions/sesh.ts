@@ -10,12 +10,16 @@
  *      or just pressed `q` — control returns to the original pi session and the
  *      TUI is restored.
  *
- * Companion CLI tool: ~/.pi/bin/pisesh   (single-file Node TUI, no deps)
+ * Bundled CLI tool: ../bin/pisesh   (single-file Node TUI, no deps)
  * Favorites file:     ~/.pi/agent/favorites.json
  */
 
 import { spawn } from "node:child_process";
+import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+// Static package path, no user-controlled segments.
+const PISESH_CLI = path.resolve(__dirname, "../bin/pisesh"); // pi-lens-ignore: ts-path-traversal
 
 function runPisesh(
 	currentSessionId: string | undefined,
@@ -25,7 +29,7 @@ function runPisesh(
 		// already detached so this is safe.
 		// PISESH_CURRENT_SESSION lets pisesh flag the row that belongs to the
 		// pi instance that just spawned it (rendered with a [NOW] badge).
-		const child = spawn("pisesh", [], {
+		const child = spawn("node", [PISESH_CLI], {
 			stdio: "inherit",
 			env: {
 				...process.env,
@@ -85,7 +89,7 @@ export default function (pi: ExtensionAPI) {
 			if (code === 0 || code === null) {
 				ctx.ui.notify("Returned from pisesh", "info");
 			} else if (code === 127) {
-				ctx.ui.notify("pisesh not found on PATH", "error");
+				ctx.ui.notify("pisesh failed to launch", "error");
 			} else {
 				ctx.ui.notify(`pisesh exited with code ${code}`, "warning");
 			}

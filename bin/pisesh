@@ -843,25 +843,54 @@ function tryCopy(text) {
 // interrupted when the prior session hit a usage limit or was closed mid-tool.
 // Left unhealed, the spawned pi crashes (exit 1), which surfaces to the parent
 // as "pisesh exited with code N". We inject a synthetic "[interrupted]"
-// toolResult for every orphaned toolCall so the resumed history is always
-// well-formed and pi never re-fires a dead tool. Idempotent; never throws.
+// toolResult for unfinished valid turns, but not errored/aborted assistant turns
+// that pi omits during replay. Old incompatible synthetic results are removed.
+// Idempotent; never throws.
 function healOrphanedToolCalls(file) {
   try {
     const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+    const entries = lines.map(raw => {
+      try { return { raw, value: JSON.parse(raw) }; } catch { return { raw, value: null }; }
+    });
+    const droppedToolCallIds = new Set();
+    for (const { value: o } of entries) {
+      const m = o && o.message;
+      if (m && m.role === 'assistant' && (m.stopReason === 'error' || m.stopReason === 'aborted')) {
+        for (const b of Array.isArray(m.content) ? m.content : []) {
+          if (b && b.type === 'toolCall' && b.id) droppedToolCallIds.add(b.id);
+        }
+      }
+    }
+
+    const removedParents = new Map();
+    const kept = entries.filter(({ value: o }) => {
+      const m = o && o.message;
+      const text = m && Array.isArray(m.content) && m.content.find(b => b && b.type === 'text');
+      const isBadSynthetic = m && m.role === 'toolResult'
+        && droppedToolCallIds.has(m.toolCallId)
+        && text && text.text.startsWith('[tool call interrupted');
+      if (isBadSynthetic) removedParents.set(o.id, o.parentId);
+      return !isBadSynthetic;
+    });
+    for (const { value: o } of kept) {
+      if (!o || typeof o.parentId === 'undefined') continue;
+      while (removedParents.has(o.parentId)) o.parentId = removedParents.get(o.parentId);
+    }
+
     const resultIds = new Set();
-    for (const l of lines) {
-      let o; try { o = JSON.parse(l); } catch { continue; }
+    for (const { value: o } of kept) {
       if (o && o.message && o.message.role === 'toolResult') resultIds.add(o.message.toolCallId);
     }
     const rnd = () => Math.random().toString(16).slice(2, 10);
     const out = [];
     let inserted = 0, prevSynthId = null;
-    for (const l of lines) {
-      let o; try { o = JSON.parse(l); } catch { out.push(l); continue; }
-      if (prevSynthId && o && typeof o.parentId !== 'undefined') { o.parentId = prevSynthId; prevSynthId = null; }
+    for (const { raw, value: o } of kept) {
+      if (!o) { out.push(raw); continue; }
+      if (prevSynthId && typeof o.parentId !== 'undefined') { o.parentId = prevSynthId; prevSynthId = null; }
       out.push(JSON.stringify(o));
-      const c = o && o.message && o.message.content;
-      if (o && o.message && o.message.role === 'assistant' && Array.isArray(c)) {
+      const m = o.message;
+      const c = m && m.content;
+      if (m && m.role === 'assistant' && m.stopReason !== 'error' && m.stopReason !== 'aborted' && Array.isArray(c)) {
         for (const b of c) {
           if (b && b.type === 'toolCall' && b.id && !resultIds.has(b.id)) {
             const synth = {
@@ -881,11 +910,12 @@ function healOrphanedToolCalls(file) {
         }
       }
     }
-    if (inserted > 0) {
+    const changed = removedParents.size + inserted;
+    if (changed > 0) {
       try { const bak = file + '.bak-orphanheal'; if (!fs.existsSync(bak)) fs.copyFileSync(file, bak); } catch {}
       fs.writeFileSync(file, out.join('\n') + '\n');
     }
-    return inserted;
+    return changed;
   } catch { return 0; }
 }
 
@@ -1010,4 +1040,5 @@ function main() {
   render();
 }
 
-main();
+if (require.main === module) main();
+else module.exports = { healOrphanedToolCalls };

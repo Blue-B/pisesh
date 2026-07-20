@@ -46,7 +46,7 @@
     "image": "https://raw.githubusercontent.com/Blue-B/pisesh/main/assets/preview.png"
   },
   "scripts": {
-    "test": "node --check bin/pisesh && echo 'pisesh: syntax OK'",
+    "test": "node --check bin/pisesh && node --test test/*.test.js",
     "prepublishOnly": "npm test"
   }
 }

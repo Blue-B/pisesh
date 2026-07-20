@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.12] - 2026-07-20
+
+### Fixed
+- Skip interrupted tool calls from assistant turns that ended with `error` or `aborted`, preventing OpenAI Responses from receiving an unmatched `function_call_output` after resume or fork.
+- Remove incompatible synthetic results previously written by pisesh and repair their child links when affected sessions are resumed.
+
 ## [0.1.11] - 2026-07-14
 
 ### Fixed

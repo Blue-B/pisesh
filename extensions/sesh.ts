@@ -23,6 +23,7 @@ const PISESH_CLI = path.resolve(__dirname, "../bin/pisesh"); // pi-lens-ignore: 
 
 function runPisesh(
 	currentSessionId: string | undefined,
+	currentModel: string | undefined,
 ): Promise<number | null> {
 	return new Promise((resolve) => {
 		// stdio:"inherit" hands the real TTY to pisesh. pi's tui.stop() has
@@ -39,6 +40,7 @@ function runPisesh(
 				...(currentSessionId
 					? { PISESH_CURRENT_SESSION: currentSessionId }
 					: {}),
+				...(currentModel ? { PISESH_PI_MODEL: currentModel } : {}),
 			},
 		});
 		child.on("exit", (code) => resolve(code));
@@ -67,6 +69,9 @@ export default function (pi: ExtensionAPI) {
 			} catch {
 				currentId = undefined;
 			}
+			const currentModel = ctx.model
+				? `${ctx.model.provider}/${ctx.model.id}`
+				: undefined;
 
 			const code = await ctx.ui.custom<number | null>(
 				(tui, _theme, _kb, done) => {
@@ -74,7 +79,7 @@ export default function (pi: ExtensionAPI) {
 					tui.stop();
 					process.stdout.write("\x1b[2J\x1b[H");
 
-					runPisesh(currentId).then((exitCode) => {
+					runPisesh(currentId, currentModel).then((exitCode) => {
 						// Restore pi's TUI
 						tui.start();
 						tui.requestRender(true);

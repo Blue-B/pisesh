@@ -27,6 +27,10 @@ const CURRENT_SESSION_ID = (process.env.PISESH_CURRENT_SESSION || '').trim();
 // via PISESH_CWD; falling back to process.cwd() keeps standalone use working.
 // Drives the "Here" tab (sessions whose effective cwd matches this dir).
 const CURRENT_CWD = (process.env.PISESH_CWD || process.cwd() || '').replace(/\/+$/, '');
+// When launched through /sesh, the extension forwards pi's active model. The
+// standalone CLI falls back to pi's configured default from settings.json.
+const CURRENT_PI_MODEL = (process.env.PISESH_PI_MODEL || '').trim();
+const PI_SETTINGS_FILE = path.join(HOME, '.pi/agent/settings.json');
 
 // ── ANSI ──────────────────────────────────────────────
 const A = {
@@ -80,12 +84,15 @@ let favorites = loadFavorites();
 function loadMeta() {
   try {
     const data = JSON.parse(fs.readFileSync(META_FILE, 'utf8'));
-    return (data && typeof data.overrides === 'object' && data.overrides) || {};
-  } catch { return {}; }
+    return {
+      overrides: (data && typeof data.overrides === 'object' && data.overrides) || {},
+      settings: (data && typeof data.settings === 'object' && data.settings) || {},
+    };
+  } catch { return { overrides: {}, settings: {} }; }
 }
 
-function saveMeta(overrides) {
-  const data = { overrides, updated: new Date().toISOString() };
+function saveMeta() {
+  const data = { settings: metaSettings, overrides: meta, updated: new Date().toISOString() };
   try {
     fs.mkdirSync(path.dirname(META_FILE), { recursive: true });
     fs.writeFileSync(META_FILE, JSON.stringify(data, null, 2));
@@ -94,7 +101,9 @@ function saveMeta(overrides) {
   }
 }
 
-let meta = loadMeta();
+const loadedMeta = loadMeta();
+let meta = loadedMeta.overrides;
+let metaSettings = loadedMeta.settings;
 
 // Override record for one session id (always returns an object, never null).
 // Used by the per-session getters, which can't read the global `meta`
@@ -112,7 +121,32 @@ function setOverride(id, field, value) {
   else delete entry[field];
   if (Object.keys(entry).length) meta[id] = entry;
   else delete meta[id];
-  saveMeta(meta);
+  saveMeta();
+}
+
+function saveTitle(id, value, source, model, thinkingLevel) {
+  if (!id) return;
+  const v = (value || '').trim();
+  const entry = meta[id] || {};
+  if (v) {
+    entry.title = v;
+    entry.titleSource = source;
+    if (source === 'llm' && model) {
+      entry.titleModel = model;
+      entry.titleThinkingLevel = thinkingLevel || 'off';
+    } else {
+      delete entry.titleModel;
+      delete entry.titleThinkingLevel;
+    }
+  } else {
+    delete entry.title;
+    delete entry.titleSource;
+    delete entry.titleModel;
+    delete entry.titleThinkingLevel;
+  }
+  if (Object.keys(entry).length) meta[id] = entry;
+  else delete meta[id];
+  saveMeta();
 }
 
 // ── Project slug decode ───────────────────────────────
@@ -211,6 +245,9 @@ function scanSessions() {
         get isCurrent() { return CURRENT_SESSION_ID !== '' && this.id === CURRENT_SESSION_ID; },
         // User overrides (sidecar meta). cwd: from is the original recorded cwd.
         get titleOverride() { return (overridesFor(this.id).title || '').trim(); },
+        get titleSource() { return overridesFor(this.id).titleSource || (this.titleOverride ? 'manual' : ''); },
+        get titleModel() { return overridesFor(this.id).titleModel || ''; },
+        get titleThinkingLevel() { return overridesFor(this.id).titleThinkingLevel || ''; },
         get cwdOverride() { return (overridesFor(this.id).cwd || '').trim(); },
         // Name shown in the list: custom title > first prompt > id fallback.
         get title() {
@@ -231,7 +268,7 @@ let tabs = ['★ Favorites', 'Today', 'Here', 'All'];
 let tabIdx = 0;
 let cursor = 0;
 let filter = '';
-let mode = 'list';      // list | filter | details | edit | browse
+let mode = 'list';      // list | filter | details | edit | browse | model
 // edit mode state (title text editor)
 let editField = '';     // 'title' | 'cwd'
 let editBuffer = '';
@@ -241,6 +278,158 @@ let editTarget = null;  // the session being edited
 let browseDir = '';        // directory currently being browsed (absolute)
 let browseEntries = [];    // [{ label, kind:'use'|'up'|'dir', path }]
 let browseSel = 0;         // selected row in browseEntries
+// LLM title generation state
+let models = [];
+let modelSel = 0;
+let modelFilter = '';
+let modelStatus = '';
+let modelThinking = new Set();
+let modelEffort = 'off';
+const EFFORT_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+const TITLE_GENERATION_CONCURRENCY = 3;
+let generationChildren = new Map(); // target id -> ChildProcess
+let generationCancelled = false;
+let settingsPendingTarget = null;
+let generationJobs = []; // queued [{ target, model, effort }]
+let generationActive = false;
+let handingOff = false;
+
+function configuredPiModel() {
+  if (CURRENT_PI_MODEL) return CURRENT_PI_MODEL;
+  try {
+    const settings = JSON.parse(fs.readFileSync(PI_SETTINGS_FILE, 'utf8'));
+    if (settings.defaultProvider && settings.defaultModel) {
+      return `${settings.defaultProvider}/${settings.defaultModel}`;
+    }
+  } catch {}
+  return '';
+}
+
+function parseModelEntries(output) {
+  return output.split(/\r?\n/).slice(1).map(line => {
+    const cols = line.trim().split(/\s+/);
+    return cols.length >= 6 ? { id: `${cols[0]}/${cols[1]}`, thinking: cols[4] === 'yes' } : null;
+  }).filter(Boolean);
+}
+
+function parseModelList(output) {
+  return parseModelEntries(output).map(entry => entry.id);
+}
+
+function textFromContent(content) {
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content.filter(x => x && x.type === 'text' && x.text).map(x => x.text.trim()).filter(Boolean).join('\n');
+}
+
+const TITLE_PROMPT = `Generate a durable, factual topic label for this coding session.
+Describe what the session is about, not what the assistant completed or reported.
+Do not summarize or quote the conversation.
+
+Output exactly one line:
+<3-8 word title>: <6-14 word subtitle>
+
+Title requirements (highest priority):
+- The title must stand alone because the subtitle may be truncated in the session list
+- Use a base-form action such as Review, Rebase, Refactor, Resolve, Fix, Add, Remove, or Investigate
+- Put the core subject, action, exact target, and distinguishing scope in the title
+- Name human-readable identifiers whenever available: PR number or name, branch, class, function, filename, package, command, or issue
+- Describe the central task or topic independent of its progress or completion state
+- Never encode status or bookkeeping such as completed, done, finished, committed, updated, tests passed, or test counts
+- Use factual, impersonal wording; never use I, we, you, I'll, I will, let's, or going to
+- Never describe the assistant's plan, promise, tool usage, response, next step, or accomplishments
+- Never copy a sentence from the conversation
+- Omit commit hashes; unlike PR numbers, they are not useful human-readable identifiers
+- When referring to a path, prefer the filename alone; include directories only when needed to disambiguate
+- Count every slash-separated path component as one word toward the 3-8 word limit (for example, src/auth/Login.ts counts as three words)
+- Prefer specific technical nouns over generic descriptions
+
+Subtitle requirements:
+- Use 6-14 words in one concise, factual imperative sentence
+- Begin with a base-form action verb such as Add, Apply, Check, Extract, Implement, Inspect, Preserve, or Remove
+- Use parallel imperative verb phrases when naming multiple actions
+- Describe technical scope, constraints, or subject matter not already in the title
+- Avoid report-style verbs such as covers, adds, identifies, resolves, or completed
+- Do not report progress, completion, commit history, todo updates, or test counts unless testing is the session's central topic
+- Use assistant evidence only to clarify the topic, target, and scope; ignore its status and process wording
+- Do not repeat or rephrase the title
+
+Examples:
+Resolve sample-service Audit Findings: Apply focused refactors, tighten authorization, and bound cache growth.
+Review desktop-client Concurrency Changes: Check lifecycle, thread safety, and event ownership.
+Review PR #42 Token Refresh: Inspect refresh concurrency and add regression coverage.
+Rebase feature/auth onto main: Resolve middleware conflicts and preserve session handling compatibility.
+Refactor SessionManager Retry Logic: Extract backoff policy and remove duplicated state transitions.
+
+General requirements:
+- Use exactly one colon to separate the title and subtitle
+- No quotation marks
+- Output only the title and subtitle`;
+
+function boundTitleContext(text, maxChars) {
+  if (text.length <= maxChars) return text;
+  const marker = '\n\n[earlier context omitted]\n\n';
+  if (maxChars <= marker.length) return text.slice(0, maxChars);
+  const available = maxChars - marker.length;
+  const head = Math.floor(available * 0.4);
+  return text.slice(0, head) + marker + text.slice(-(available - head));
+}
+
+function buildTitlePrompt(file, maxChars = 16000) {
+  const userRequests = [];
+  const assistantReports = [];
+  let sessionCwd = '';
+  try {
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      let obj;
+      try { obj = JSON.parse(line); } catch { continue; }
+      if (obj.type === 'session' && !sessionCwd && typeof obj.cwd === 'string') {
+        sessionCwd = obj.cwd.trim();
+        continue;
+      }
+      if (obj.type !== 'message' || !obj.message) continue;
+      const { role, content, stopReason } = obj.message;
+      if (role !== 'user' && role !== 'assistant') continue;
+      const text = textFromContent(content);
+      if (!text) continue;
+      if (role === 'user') {
+        userRequests.push(`User request ${userRequests.length + 1}: ${text}`);
+        continue;
+      }
+      const hasToolCall = Array.isArray(content) && content.some(x => x && x.type === 'toolCall');
+      if (!hasToolCall && stopReason !== 'error' && stopReason !== 'aborted') {
+        assistantReports.push(`Assistant evidence ${assistantReports.length + 1}: ${text}`);
+      }
+    }
+  } catch (e) { throw new Error(`could not read session: ${e.message}`); }
+  if (!userRequests.length && !assistantReports.length) throw new Error('no conversation text found');
+
+  const userText = userRequests.join('\n\n');
+  const assistantText = assistantReports.join('\n\n');
+  const totalBudget = Math.max(0, maxChars);
+  let userBudget = Math.min(userText.length, Math.floor(totalBudget * 0.7));
+  let assistantBudget = Math.min(assistantText.length, totalBudget - userBudget);
+  let remaining = totalBudget - userBudget - assistantBudget;
+  const extraUser = Math.min(remaining, userText.length - userBudget);
+  userBudget += extraUser;
+  remaining -= extraUser;
+  assistantBudget += Math.min(remaining, assistantText.length - assistantBudget);
+
+  const sections = [];
+  const cwdParts = sessionCwd.replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean);
+  if (cwdParts.length) sections.push(`Session context:\nWorking directory: ${cwdParts[cwdParts.length - 1]}`);
+  if (userText) sections.push(`User requests (authoritative task context):\n${boundTitleContext(userText, userBudget)}`);
+  if (assistantText) sections.push(`Assistant evidence (use only for topic, target, and scope; ignore completion and process wording):\n${boundTitleContext(assistantText, assistantBudget)}`);
+  return `${TITLE_PROMPT}\n\nConversation evidence:\n${sections.join('\n\n')}`;
+}
+
+function cleanGeneratedTitle(output) {
+  let title = (output || '').split(/\r?\n/).map(x => x.trim()).find(Boolean) || '';
+  title = title.replace(/^title\s*:\s*/i, '').replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, '').replace(/\s+/g, ' ').trim();
+  if (!title) throw new Error('model returned an empty title');
+  return [...title].slice(0, 200).join('');
+}
 
 // ── Filtering by tab ──────────────────────────────────
 function visibleSessions() {
@@ -365,6 +554,7 @@ function visLen(s) {
 function render() {
   if (mode === 'edit') return renderEdit();
   if (mode === 'browse') return renderBrowse();
+  if (mode === 'model') return renderModelPicker();
   if (mode === 'details') return renderDetails();
   renderList();
 }
@@ -376,7 +566,8 @@ function renderList() {
 
   // Header
   out += ' ' + A.B + A.cyn + 'pisesh' + A.R + A.D + '  pi session bookmarks  ' + A.R;
-  out += A.gry + `${sessions.length} sessions · ${favorites.size} starred` + A.R + '\n\n';
+  out += A.gry + `${sessions.length} sessions · ${favorites.size} starred` + A.R;
+  out += '\n\n';
 
   // Tabs
   let tabLine = ' ';
@@ -424,14 +615,22 @@ function renderList() {
       const sel = i === cursor;
       const star = s.favored ? A.yel + '★' + A.R : ' ';
       const arrow = sel ? A.cyn + '▶' + A.R : ' ';
+      const currentJob = generationActive && generationChildren.has(s.id);
+      const queuedJob = generationActive && generationJobs.some(job => job.target.id === s.id);
       const ts = A.gry + fmtTs(s.mtime) + A.R;
       const cwd = A.mag + pad(shortCwd(s.effectiveCwd), 14) + A.R;
       const badge = s.isCurrent ? A.grn + A.B + '[NOW]' + A.R + ' ' : '';
-      // ✎ marks a user-renamed session so it's clear the label isn't the prompt.
-      const pen = s.titleOverride ? A.cyn + '✎' + A.R + ' ' : '';
-      const titleMax = Math.max(20, W - 38 - (s.isCurrent ? 7 : 0) - (s.titleOverride ? 2 : 0));
+      // Generation state and title provenance share one stable marker column.
+      const marker = currentJob
+        ? A.yel + '↻' + A.R + ' '
+        : queuedJob
+          ? A.gry + '·' + A.R + ' '
+          : s.titleOverride
+            ? A.cyn + (s.titleSource === 'llm' ? '◆' : '✎') + A.R + ' '
+            : '';
+      const titleMax = Math.max(20, W - 38 - (s.isCurrent ? 7 : 0) - (marker ? 2 : 0));
       const title = trunc(s.title, titleMax);
-      const rowText = ` ${arrow} ${star} ${ts}  ${cwd}  ${badge}${pen}${title}`;
+      const rowText = ` ${arrow} ${star} ${ts}  ${cwd}  ${badge}${marker}${title}`;
       if (sel) {
         const pad2 = ' '.repeat(Math.max(0, W - visLen(rowText) - 1));
         out += A.bgBlu + rowText + pad2 + A.R + '\n';
@@ -452,12 +651,178 @@ function renderList() {
       + A.D + 'f' + A.R + ' star  '
       + A.D + 'Enter' + A.R + ' resume  '
       + A.D + 'e' + A.R + ' edit name  '
+      + A.D + 'g' + A.R + ' queue title  '
+      + A.D + 'G' + A.R + ' settings  '
       + A.D + 'p' + A.R + ' edit cwd  '
       + A.D + 'd' + A.R + ' details  '
       + A.D + '/' + A.R + ' search  '
       + A.D + 'q' + A.R + ' quit' + A.R + '\n';
 
   process.stdout.write(out);
+}
+
+function filteredModels() {
+  const q = modelFilter.toLowerCase();
+  return q ? models.filter(m => m.toLowerCase().includes(q)) : models;
+}
+
+function renderModelPicker() {
+  const W = process.stdout.columns || 100;
+  const H = process.stdout.rows || 30;
+  const list = filteredModels();
+  if (modelSel >= list.length) modelSel = Math.max(0, list.length - 1);
+  let out = A.clr;
+  out += ' ' + A.B + A.cyn + 'pisesh' + A.R + A.D + '  title generation settings' + A.R + '\n\n';
+  if (settingsPendingTarget) out += ' ' + A.D + 'generate' + A.R + '  ' + trunc(settingsPendingTarget.title, W - 14) + '\n';
+  out += ' ' + A.D + 'filter ' + A.R + A.cyn + modelFilter + A.R + (modelFilter ? A.I + ' ' + A.R : '') + '\n';
+  out += A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
+  if (modelStatus) out += '\n ' + A.D + modelStatus + A.R + '\n';
+  else if (!list.length) out += '\n ' + A.D + '(no matching models)' + A.R + '\n';
+  else {
+    const effortWidths = EFFORT_LEVELS.map(level => level.length + 2);
+    const effortTotal = effortWidths.reduce((sum, width) => sum + width, 0);
+    const modelWidth = Math.max(12, W - effortTotal - 5);
+    out += '   ' + A.D + pad('model', modelWidth) + pad('effort', effortTotal) + A.R + '\n';
+    const usable = Math.max(3, H - 10);
+    const start = Math.max(0, Math.min(modelSel - Math.floor(usable / 2), list.length - usable));
+    for (let i = start; i < Math.min(list.length, start + usable); i++) {
+      const selected = i === modelSel;
+      const supportsEffort = modelThinking.has(list[i]);
+      let row = ' ' + (selected ? A.cyn + '▶' + A.R : ' ') + ' ';
+      row += (selected ? A.B : '') + pad(trunc(list[i], modelWidth), modelWidth) + (selected ? A.R : '');
+      for (let j = 0; j < EFFORT_LEVELS.length; j++) {
+        const level = EFFORT_LEVELS[j];
+        const available = supportsEffort || level === 'off';
+        const cell = pad(available ? level : '—', effortWidths[j]);
+        if (selected && level === modelEffort) row += A.bgBlu + A.B + cell + A.R;
+        else row += available ? A.D + cell + A.R : A.gry + cell + A.R;
+      }
+      out += row + '\n';
+    }
+  }
+  out += '\n' + A.gry + '─'.repeat(Math.max(1, W - 1)) + A.R + '\n';
+  out += ' ' + A.D + '↑↓' + A.R + ' model  ' + A.D + '←→' + A.R + ' effort  '
+      + A.D + 'type' + A.R + ' filter  ' + A.grn + A.B + 'Enter' + A.R + ' save  '
+      + A.D + 'Esc' + A.R + ' cancel\n';
+  process.stdout.write(out);
+}
+
+function openGenerationSettings(pendingTarget = null) {
+  settingsPendingTarget = pendingTarget;
+  modelFilter = '';
+  modelSel = 0;
+  mode = 'model';
+  modelStatus = 'Loading models from pi…';
+  render();
+  let stdout = '', stderr = '';
+  const child = spawn('pi', ['--list-models'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  child.stdout.on('data', d => { stdout += d; });
+  child.stderr.on('data', d => { stderr += d; });
+  child.on('error', e => { if (mode === 'model') { modelStatus = `Could not run pi: ${e.message}`; render(); } });
+  child.on('close', code => {
+    if (mode !== 'model') return;
+    const entries = code === 0 ? parseModelEntries(stdout) : [];
+    models = entries.map(entry => entry.id);
+    modelThinking = new Set(entries.filter(entry => entry.thinking).map(entry => entry.id));
+    modelStatus = models.length ? '' : `Could not list models${stderr.trim() ? `: ${stderr.trim()}` : ''}`;
+    const preferred = [metaSettings.titleModel, configuredPiModel()].filter(Boolean);
+    const idx = preferred.map(m => models.indexOf(m)).find(i => i >= 0);
+    modelSel = idx !== undefined ? idx : 0;
+    modelEffort = EFFORT_LEVELS.includes(metaSettings.titleThinkingLevel) ? metaSettings.titleThinkingLevel : 'off';
+    if (!modelThinking.has(models[modelSel])) modelEffort = 'off';
+    render();
+  });
+}
+
+function takeGenerationBatch(queue, activeCount, limit = TITLE_GENERATION_CONCURRENCY) {
+  const available = Math.max(0, limit - activeCount);
+  return queue.splice(0, available);
+}
+
+function enqueueTitle(target) {
+  if (!target) return;
+  if (!metaSettings.titleModel) return openGenerationSettings(target);
+  if (generationChildren.has(target.id) || generationJobs.some(job => job.target.id === target.id)) return;
+
+  generationJobs.push({
+    target,
+    model: metaSettings.titleModel,
+    effort: metaSettings.titleThinkingLevel || 'off',
+  });
+  if (!generationActive) {
+    generationCancelled = false;
+    generationActive = true;
+  }
+  pumpTitleGeneration();
+}
+
+function finishGeneration() {
+  generationActive = false;
+  generationJobs = [];
+  generationChildren.clear();
+  generationCancelled = false;
+  if (!handingOff) render();
+}
+
+function cancelGeneration() {
+  if (!generationActive) return false;
+  generationCancelled = true;
+  generationJobs = [];
+  for (const child of generationChildren.values()) child.kill('SIGTERM');
+  if (generationChildren.size === 0) finishGeneration();
+  else if (!handingOff) render();
+  return true;
+}
+
+function pumpTitleGeneration() {
+  if (generationCancelled) {
+    if (generationChildren.size === 0) finishGeneration();
+    return;
+  }
+
+  while (generationJobs.length && generationChildren.size < TITLE_GENERATION_CONCURRENCY) {
+    const batch = takeGenerationBatch(generationJobs, generationChildren.size);
+    for (const job of batch) startTitleGeneration(job);
+  }
+
+  if (generationJobs.length === 0 && generationChildren.size === 0) finishGeneration();
+  else if (!handingOff) render();
+}
+
+function startTitleGeneration(job) {
+  let prompt;
+  try { prompt = buildTitlePrompt(job.target.file); }
+  catch { return; }
+
+  let stdout = '', stderr = '', settled = false;
+  const child = spawn('pi', [
+    '--print', '--no-session',
+    '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-tools',
+    '--system-prompt', 'You generate durable factual topic labels, not completion reports or conversation summaries. Use base-form imperative actions in both the title and subtitle. Describe the session’s central task independent of progress, using assistant evidence only for the topic, target, and scope. Never copy status, process, accomplishments, plans, promises, tool usage, first-person wording, or report-style phrasing. Follow the user instructions exactly and output only the requested single-line title and subtitle.',
+    '--model', job.model, '--thinking', job.effort, prompt,
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  generationChildren.set(job.target.id, child);
+  const timer = setTimeout(() => { if (!settled) child.kill('SIGTERM'); }, 120000);
+  child.stdout.on('data', d => { stdout += d; });
+  child.stderr.on('data', d => { stderr += d; });
+  const complete = () => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    if (generationChildren.get(job.target.id) === child) generationChildren.delete(job.target.id);
+    pumpTitleGeneration();
+  };
+  child.on('error', complete);
+  child.on('close', code => {
+    if (settled) return;
+    if (code === 0) {
+      try {
+        saveTitle(job.target.id, cleanGeneratedTitle(stdout), 'llm', job.model, job.effort);
+        return complete();
+      } catch {}
+    }
+    complete();
+  });
 }
 
 // Inline editor for a session's title or cwd. Renders a small focused panel
@@ -518,7 +883,11 @@ function renderDetails() {
   out += row('id', s.id, A.cyn);
   if (s.isCurrent) out += row('current', '● this is the attached pi session', A.grn);
   out += row('starred', s.favored ? '★ yes' : '☆ no', s.favored ? A.yel : A.gry);
-  out += row('title', s.title + (s.titleOverride ? A.cyn + '  (custom)' + A.R : ''));
+  out += row('title', s.title + (s.titleOverride ? A.cyn + `  (${s.titleSource === 'llm' ? 'generated' : 'custom'})` + A.R : ''));
+  if (s.titleModel) {
+    out += row('title model', s.titleModel, A.cyn);
+    out += row('title effort', s.titleThinkingLevel || 'off', A.cyn);
+  }
   out += row('started', new Date(s.ts).toLocaleString());
   out += row('updated', new Date(s.mtime).toLocaleString());
   out += row('cwd', s.effectiveCwd + (s.cwdOverride ? A.cyn + '  (custom)' + A.R : ''), A.mag);
@@ -535,6 +904,7 @@ function renderDetails() {
   out += ' ' + A.D + 'Enter' + A.R + ' resume  '
       + A.D + 'f' + A.R + ' star  '
       + A.D + 'e' + A.R + ' edit name  '
+      + A.D + 'g' + A.R + ' generate title  '
       + A.D + 'p' + A.R + ' edit cwd  '
       + A.D + 'c' + A.R + ' copy id  '
       + A.D + 'Esc/d/q' + A.R + ' back' + A.R + '\n';
@@ -567,9 +937,16 @@ function setupInput() {
 
   process.stdin.on('keypress', (str, key) => {
     try {
+      if (generationActive && key.ctrl && key.name === 'c') return quit();
+      if (generationActive && (key.name === 'escape' || key.name === 'q')) {
+        if (generationCancelled) return quit();
+        cancelGeneration();
+        return;
+      }
       if (mode === 'filter') handleFilter(str, key);
       else if (mode === 'edit') handleEdit(str, key);
       else if (mode === 'browse') handleBrowse(str, key);
+      else if (mode === 'model') handleModelPicker(str, key);
       else if (mode === 'details') handleDetails(str, key);
       else handleList(str, key);
       render();
@@ -593,7 +970,10 @@ function handleList(str, key) {
   const k = key.name;
 
   if (key.ctrl && k === 'c') return quit();
-  if (k === 'q') return quit();
+  if (k === 'q') {
+    if (filter) { filter = ''; cursor = 0; return; }
+    return quit();
+  }
   // Esc: clears filter first (one-step back-out), otherwise quits.
   // Matches `q` so muscle memory works either way.
   if (k === 'escape') {
@@ -621,6 +1001,8 @@ function handleList(str, key) {
   else if (k === 'return') resumeSession(list[cursor]);
   else if (k === 'd') { if (list[cursor]) mode = 'details'; }
   else if (k === 'e') startEdit(list[cursor], 'title');
+  else if (k === 'g' && (str === 'G' || key.shift)) openGenerationSettings();
+  else if (k === 'g') enqueueTitle(list[cursor]);
   else if (k === 'p') startBrowse(list[cursor]);
   else if (str === '/') { mode = 'filter'; }
   else if (k === 'r') { sessions = scanSessions(); cursor = 0; }
@@ -632,7 +1014,8 @@ function handleList(str, key) {
 
 function handleFilter(str, key) {
   const k = key.name;
-  if (k === 'return' || k === 'escape') { mode = 'list'; return; }
+  if (k === 'return') { mode = 'list'; return; }
+  if (k === 'escape' || k === 'q') { filter = ''; cursor = 0; mode = 'list'; return; }
   if (k === 'backspace') { filter = filter.slice(0, -1); cursor = 0; return; }
   if (key.ctrl && k === 'c') return quit();
   if (key.ctrl && k === 'u') { filter = ''; cursor = 0; return; }
@@ -654,7 +1037,49 @@ function handleDetails(str, key) {
     tryCopy(s.id);
   }
   if (k === 'e' && s) startEdit(s, 'title');
+  if (k === 'g' && (str === 'G' || key.shift)) openGenerationSettings();
+  else if (k === 'g' && s) enqueueTitle(s);
   if (k === 'p' && s) startBrowse(s);
+}
+
+function handleModelPicker(str, key) {
+  const k = key.name;
+  const list = filteredModels();
+  if (key.ctrl && k === 'c') return quit();
+  if (k === 'escape' || k === 'q') {
+    mode = 'list'; settingsPendingTarget = null; modelStatus = ''; return;
+  }
+  if (k === 'up' || k === 'k') {
+    modelSel = Math.max(0, modelSel - 1);
+    if (!modelThinking.has(list[modelSel])) modelEffort = 'off';
+    return;
+  }
+  if (k === 'down' || k === 'j') {
+    modelSel = Math.min(list.length - 1, modelSel + 1);
+    if (!modelThinking.has(list[modelSel])) modelEffort = 'off';
+    return;
+  }
+  if ((k === 'left' || k === 'right') && modelThinking.has(list[modelSel])) {
+    const delta = k === 'right' ? 1 : -1;
+    const idx = EFFORT_LEVELS.indexOf(modelEffort);
+    modelEffort = EFFORT_LEVELS[(idx + delta + EFFORT_LEVELS.length) % EFFORT_LEVELS.length];
+    return;
+  }
+  if (k === 'return') {
+    if (!modelStatus.startsWith('Loading') && list[modelSel]) {
+      metaSettings.titleModel = list[modelSel];
+      metaSettings.titleThinkingLevel = modelEffort;
+      saveMeta();
+      const pending = settingsPendingTarget;
+      settingsPendingTarget = null;
+      mode = 'list';
+      if (pending) enqueueTitle(pending);
+    }
+    return;
+  }
+  if (k === 'backspace') { modelFilter = modelFilter.slice(0, -1); modelSel = 0; return; }
+  if (key.ctrl && k === 'u') { modelFilter = ''; modelSel = 0; return; }
+  if (str && str.length === 1 && !key.ctrl) { modelFilter += str; modelSel = 0; }
 }
 
 // Open the inline editor for a session's title or cwd, seeded with the
@@ -673,7 +1098,10 @@ function handleEdit(str, key) {
   if (key.ctrl && k === 'c') return quit();
   if (k === 'escape') { mode = 'list'; editTarget = null; return; }
   if (k === 'return') {
-    if (editTarget) setOverride(editTarget.id, editField, editBuffer);
+    if (editTarget) {
+      if (editField === 'title') saveTitle(editTarget.id, editBuffer, 'manual');
+      else setOverride(editTarget.id, editField, editBuffer);
+    }
     mode = 'list';
     editTarget = null;
     return;
@@ -921,6 +1349,10 @@ function healOrphanedToolCalls(file) {
 
 function resumeSession(s) {
   if (!s) return;
+  // A resumed pi takes over this terminal, so stop background title work first
+  // and suppress any final render from its asynchronous close handler.
+  handingOff = true;
+  cancelGeneration();
   // Heal orphaned tool calls before handing off, so resume can't crash the
   // spawned pi (see healOrphanedToolCalls).
   try { healOrphanedToolCalls(s.file); } catch {}
@@ -946,6 +1378,8 @@ function resumeSession(s) {
 }
 
 function quit() {
+  handingOff = true;
+  for (const child of generationChildren.values()) child.kill('SIGTERM');
   // Restore user's pre-pisesh terminal (alt screen exits + cursor back).
   // No explicit clear needed — the terminal restoration handles it and the
   // jump back to the previous prompt feels instant.
@@ -972,13 +1406,17 @@ TUI keys:
   f / Space        toggle favorite
   Enter            resume session (spawns 'pi --session …' in its cwd)
   e                edit name (custom display title)
+  g                queue title generation with the saved model + effort
+                   (first use opens settings; active/queued threads are ignored)
+  G                open title generation model + effort settings
   p                edit cwd — arrow-key directory browser
                    (↑↓ move, →/Enter open dir, ← parent, s select, Esc cancel)
                    sets the working directory used on resume / "Here" tab
   d                show details
   /                search (id / project / prompt / title)
   r                rescan session files
-  q / Esc / Ctrl-C quit
+  q / Esc          cancel generation / clear search first; press again to quit
+  Ctrl-C           cancel generation and quit immediately
 
 Tabs:
   Here             only sessions whose cwd matches the directory pisesh was
@@ -1041,4 +1479,4 @@ function main() {
 }
 
 if (require.main === module) main();
-else module.exports = { healOrphanedToolCalls };
+else module.exports = { healOrphanedToolCalls, parseModelEntries, parseModelList, buildTitlePrompt, cleanGeneratedTitle, takeGenerationBatch };

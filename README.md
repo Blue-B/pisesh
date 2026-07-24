@@ -54,7 +54,7 @@ pisesh is a **single-file Node script** (no dependencies, ~900 LoC) that gives y
 | Need                                       | What you get                                                                 |
 | ------------------------------------------ | ---------------------------------------------------------------------------- |
 | Mark important sessions                    | ⭐ Star/unstar with one keystroke; favorites persist to one global JSON       |
-| Give a thread a real name                  | `e` sets a custom title (marked `✎`); overrides the first-prompt label        |
+| Give a thread a real name                  | `e` sets one manually; `g` generates one with a model you choose             |
 | See only the current project's sessions    | `Here` tab filters to sessions whose cwd matches where you launched pisesh   |
 | Fix where a session resumes                | `p` opens an arrow-key directory browser; sets the cwd pi `cd`s into         |
 | Find a session by what you said            | `/` searches id + project + first user prompt + custom title                 |
@@ -104,11 +104,13 @@ For local pi testing, run `pi install .` from the cloned repository so the exten
 | `f` / `Space`                | star / unstar the selected session                           |
 | `Enter`                      | resume the session; runs `pi --session <id>` in its (or the overridden) cwd |
 | `e`                          | edit name: set a custom display title, shown with `✎` in the list |
+| `g`                          | immediately queue title generation with the saved model + effort; first use opens settings |
+| `G`                          | open title-generation settings to choose the saved model + effort |
 | `p`                          | edit cwd with an arrow-key directory browser; sets the resume / `Here` dir |
 | `d`                          | session details (full prompt, file, byte size, timestamps)   |
 | `/`                          | search by id / project / first user prompt / custom title    |
-| `Esc`                        | clear search first, then quit                                |
-| `q` / `Ctrl-C`               | quit (terminal restored)                                     |
+| `Esc` / `q`                  | cancel generation or clear search first; press again to quit |
+| `Ctrl-C`                     | cancel generation and quit immediately                       |
 | `r`                          | rescan session files (after pi starts a new session)         |
 | `c` (in details view)        | copy session id to clipboard (clip.exe / pbcopy / xclip)     |
 | `Home` `End` `PgUp` `PgDn`   | jump to top / bottom / ±10                                   |
@@ -140,12 +142,13 @@ pisesh --help
 | Storage             | Two JSON files: `~/.pi/agent/favorites.json` (starred ids) + `~/.pi/agent/pisesh-meta.json` (per-session title / cwd overrides) |
 | Session discovery   | Direct filesystem scan of `~/.pi/agent/sessions/<projectSlug>/*.jsonl`; first 96 KB parsed       |
 | Process model       | Slash command pauses pi's TUI, spawns pisesh with inherited stdio, restarts pi on exit           |
+| Title generation    | Ephemeral `pi --print --no-session` call using the model and effort selected in pisesh            |
 
 ### What it explicitly does **not** depend on
 
 - No `npm install` for the bundled CLI runtime; it's genuinely zero-dependency
 - No native binaries / GPU / ffmpeg / database
-- No network calls, no telemetry, no analytics
+- No telemetry or analytics; title generation contacts only the provider for the model you select
 - No daemon / background process
 
 ## Storage
@@ -153,7 +156,7 @@ pisesh --help
 | What       | Where                                                       |
 | ---------- | ----------------------------------------------------------- |
 | Favorites  | `~/.pi/agent/favorites.json`                                |
-| Overrides  | `~/.pi/agent/pisesh-meta.json` (per-session custom title / cwd, keyed by session id) |
+| Overrides  | `~/.pi/agent/pisesh-meta.json` (per-session title / cwd plus the saved title model + effort preset) |
 | Sessions   | `~/.pi/agent/sessions/<projectSlug>/<timestamp>_<uuid>.jsonl` (pi's native layout; pisesh never writes here) |
 
 Favorites file shape:

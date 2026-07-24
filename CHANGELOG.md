@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+- Add background LLM title generation: `g` queues a session using the saved model and effort, while `G` opens generation settings. Up to three titles generate concurrently; active, queued, and generated titles are marked `↻`, `·`, and `◆`. (#2)
+
 ## [0.1.12] - 2026-07-20
 
 ### Fixed
